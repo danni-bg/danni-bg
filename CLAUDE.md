@@ -150,6 +150,19 @@ capabilities each have their own spec:
   `curate.translate-skipped-stub` log line (FR-332), keeping the `hosted-api` seam intact. The
   `curate.completed` log + `RunCurateResult` now report `translationsWritten`/`translationsSkipped`/
   `translationsEmpty` (FR-333)
+- 048 egov scope fidelity: `scope` now means the same thing on every portal adapter. The egov-bg path
+  previously honored only `scope.datasetIds` and froze the whole portal into the campaign checkpoint.
+  Now `enumerateUris` filters `listDatasets` pages by the summary `org_id` (`egovSummaryInScope`,
+  publisher identity `egov-org-<id>`; FR-300/303), `runEgovSync` applies the shared
+  `buildScopePredicate` over the full `getDatasetDetails` as a per-dataset in-scope check — resolving
+  `tags` (absent from the summary) and recording out-of-scope datasets as `outOfScope` rather than
+  capturing (FR-301) — and `reconcileCatalog` reuses the same enumeration filter (FR-303). A scope
+  field an adapter can't express (`categories` on egov) fails loud at sync start
+  (`assertScopeSupported` → `UnsupportedScopeFieldError`, FR-302; never silently crawls a superset).
+  The scoped campaign hash INPUT is versioned (`scope-hash.ts` `SCOPE_SEMANTICS_VERSION`, FR-304) so a
+  pre-fix scoped campaign (which froze the full portal) re-keys to a fresh row; the `{ all: true }`
+  full-portal sentinel stays unversioned and resumes untouched. Adapter-parity tests (SC-4) assert the
+  egov filter and `buildScopePredicate` agree for the fields both support
 
 Project constitution: `.specify/memory/constitution.md` (v1.1.1; the locked test runner is `bun:test`).
 <!-- SPECKIT END -->

@@ -10,7 +10,15 @@ import { sha256Hex } from '../lib/hash.ts';
  *
  * Normalization operates on ASCII id/slug values only; it never touches authoritative Cyrillic
  * title/description fields (Constitution X). Lowercasing a slug is lossless.
+ *
+ * Scope-semantics version (spec 048, FR-304): before the egov adapter honored publisher/tag scope,
+ * a scoped egov campaign froze the WHOLE portal under its scoped hash. Resuming such a row post-fix
+ * would keep serving the full-portal list, so the hash INPUT for a scoped campaign is versioned —
+ * every scoped run derives a fresh campaign row. The `{ all: true }` full-portal sentinel is left
+ * UNVERSIONED so its hash is byte-identical to before and existing full-portal campaigns resume
+ * untouched (SC-3). Bump this when scope semantics change again.
  */
+export const SCOPE_SEMANTICS_VERSION = 'v2-egov-scope-fidelity';
 
 /** The canonical scope object persisted as `crawl_checkpoints.scope_json`. */
 export type CanonicalScope =
@@ -49,5 +57,12 @@ export interface ScopeHashResult {
 
 export function computeScopeHash(scope: ScopeConfig): ScopeHashResult {
   const canonical = canonicalScope(scope);
-  return { scopeHash: sha256Hex(JSON.stringify(canonical)), canonical };
+  // The persisted `scope_json` stays `canonical` (unchanged shape). Only the HASH INPUT is
+  // versioned, and only for a scoped campaign — the `{ all: true }` sentinel hashes as before so
+  // full-portal campaigns keep their key and resume (FR-304).
+  const hashInput =
+    'all' in canonical
+      ? JSON.stringify(canonical)
+      : JSON.stringify({ v: SCOPE_SEMANTICS_VERSION, ...canonical });
+  return { scopeHash: sha256Hex(hashInput), canonical };
 }

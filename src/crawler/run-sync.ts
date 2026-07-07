@@ -17,7 +17,7 @@ import type { CkanClient } from './ckan-client.ts';
 import { discoverDatasets } from './discover.ts';
 import type { PortalHttp } from './http.ts';
 import { reconcileOutOfScope } from './out-of-scope.ts';
-import { buildScopePredicate } from './scope.ts';
+import { assertScopeSupported, buildScopePredicate } from './scope.ts';
 import { detectWithdrawals } from './withdrawn.ts';
 
 export interface RunSyncOptions {
@@ -44,6 +44,10 @@ export interface RunSyncResult {
 
 export async function runSync(opts: RunSyncOptions): Promise<RunSyncResult> {
   const scope = opts.scopeFilterOverride ?? opts.config.scope;
+  // Scope semantics are adapter-independent (spec 048, FR-302): CKAN expresses all four scope
+  // fields, so this never throws today — it keeps the "no field is silently dropped" guarantee
+  // symmetric across adapters and fails loud if an unsupported field is ever added.
+  assertScopeSupported(scope, 'ckan');
   const scopePredicate = buildScopePredicate(scope);
   const blobStore = new BlobStore({ storeRoot: opts.storeRoot });
 
