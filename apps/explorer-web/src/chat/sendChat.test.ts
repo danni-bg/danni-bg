@@ -29,7 +29,6 @@ describe('dispatchSSEEvent', () => {
     const cb: ChatCallbacks = {
       onSession: (id) => calls.push(`session:${id}`),
       onToken: (d) => calls.push(`token:${d}`),
-      onTool: (n, s) => calls.push(`tool:${n}:${s}`),
       onCitations: (c) => calls.push(`cites:${c.length}`),
       onAnchors: (a) => calls.push(`anchors:${a.datasetIds.join(',')}`),
       onError: (m) => calls.push(`error:${m}`),
@@ -37,7 +36,6 @@ describe('dispatchSSEEvent', () => {
     };
     dispatchSSEEvent({ event: 'session', data: '{"sessionId":"s1"}' }, cb);
     dispatchSSEEvent({ event: 'token', data: '{"delta":"hi"}' }, cb);
-    dispatchSSEEvent({ event: 'tool', data: '{"name":"mirrorSearch","status":"start"}' }, cb);
     dispatchSSEEvent({ event: 'citations', data: '{"citations":[{"datasetId":"d1"}]}' }, cb);
     dispatchSSEEvent({ event: 'anchors', data: '{"geoEntityIds":[],"datasetIds":["d1"]}' }, cb);
     dispatchSSEEvent({ event: 'error', data: '{"message":"boom"}' }, cb);
@@ -45,7 +43,6 @@ describe('dispatchSSEEvent', () => {
     expect(calls).toEqual([
       'session:s1',
       'token:hi',
-      'tool:mirrorSearch:start',
       'cites:1',
       'anchors:d1',
       'error:boom',
@@ -53,7 +50,11 @@ describe('dispatchSSEEvent', () => {
     ]);
   });
 
-  it('ignores unknown events and tolerates missing callbacks', () => {
+  it('ignores unknown events (incl. the now-unconsumed `tool`) and tolerates missing callbacks', () => {
+    // The server still emits `tool`, but spec 058 dropped its callback — it must fall through harmlessly.
+    expect(() =>
+      dispatchSSEEvent({ event: 'tool', data: '{"name":"mirrorSearch","status":"start"}' }, {}),
+    ).not.toThrow();
     expect(() => dispatchSSEEvent({ event: 'mystery', data: '{}' }, {})).not.toThrow();
     expect(() => dispatchSSEEvent({ event: 'token', data: '{"delta":"x"}' }, {})).not.toThrow();
   });

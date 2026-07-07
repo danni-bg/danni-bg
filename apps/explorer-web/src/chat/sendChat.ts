@@ -9,7 +9,6 @@ export interface ChatCallbacks {
   /** The server's generation id for this turn — used to re-attach (resume) or stop server-side. */
   onMessage?: (messageId: string) => void;
   onToken?: (delta: string) => void;
-  onTool?: (name: string, status: string) => void;
   onCitations?: (citations: Citation[]) => void;
   onAnchors?: (anchor: MapAnchor) => void;
   /** Live token usage for the turn (cumulative ↑input / ↓output / cached). */
@@ -42,11 +41,8 @@ export function dispatchSSEEvent(ev: SSEEvent, cb: ChatCallbacks): void {
     case 'token':
       cb.onToken?.(parseEventData<{ delta: string }>(ev).delta);
       return;
-    case 'tool': {
-      const t = parseEventData<{ name: string; status: string }>(ev);
-      cb.onTool?.(t.name, t.status);
-      return;
-    }
+    // The server still emits a `tool` status event; with no tool-status UI it has no consumer, so it
+    // falls through the switch harmlessly (spec 058 FR-414 — the server contract is untouched).
     case 'citations':
       cb.onCitations?.(parseEventData<{ citations: Citation[] }>(ev).citations);
       return;

@@ -5,39 +5,12 @@ import { Link } from 'react-router-dom';
 import remarkGfm from 'remark-gfm';
 import { useAuth } from '../auth/AuthContext.tsx';
 import { completePartialMarkdown } from '../lib/markdown.ts';
-import {
-  type SessionSummary,
-  deleteSession,
-  getSession,
-  listSessions,
-  stopGeneration,
-} from '../lib/meApi.ts';
-import { filterStateToScope } from '../lib/scope.ts';
 import { useExplorer } from '../store/explorerStore.ts';
-import type { Citation, MapAnchor } from '../types.ts';
-import { type ChatCallbacks, resumeChat, sendChat } from './sendChat.ts';
-
-const SESSION_KEY = 'danni.chat.session';
+import { type TurnUsage, useChatSession } from './useChatSession.ts';
 
 // Styled hover tooltip (appears above the button); shown via group-hover so it matches the theme.
 const TOOLTIP =
   'pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-popover px-2 py-1 text-xs text-popover-foreground opacity-0 shadow-md ring-1 ring-border transition-opacity group-hover:opacity-100';
-
-interface TurnUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cachedInputTokens: number;
-}
-
-interface ChatMessage {
-  id: number;
-  role: 'user' | 'assistant';
-  content: string;
-  citations?: Citation[];
-  /** Assistant turns: tokens consumed + reply duration (ms), shown after the reply + kept on reload. */
-  usage?: TurnUsage;
-  durationMs?: number;
-}
 
 interface ChatPanelProps {
   onSelectDataset: (datasetId: string) => void;
@@ -100,48 +73,31 @@ function UsageFooter({
   );
 }
 
-/** The regions an assistant turn grounded on — the latest such set, so resume re-selects them. */
-function lastGroundedRegions(messages: { role: string; anchors?: MapAnchor }[]): string[] {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m?.role === 'assistant' && m.anchors && m.anchors.geoEntityIds.length > 0) {
-      return m.anchors.geoEntityIds;
-    }
-  }
-  return [];
-}
-
 export function ChatPanel({ onSelectDataset }: ChatPanelProps) {
-  const filters = useExplorer((s) => s.filters);
-  const setHighlight = useExplorer((s) => s.setHighlight);
-  // Chat-grounded regions become the map selection (filters.geoUnitIds) — so they show as selector
-  // chips, scope the dataset list, and scope the next turn, exactly as if picked on the map.
-  const selectRegions = useExplorer((s) => s.selectRegions);
   const chatFocus = useExplorer((s) => s.chatFocus);
   const setChatFocus = useExplorer((s) => s.setChatFocus);
-  const reader = useExplorer((s) => s.reader);
   const { user } = useAuth();
 
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  // The whole session lifecycle — messages, streaming, meters, persistence, resume, history CRUD —
+  // lives in the hook (spec 058); this component is layout, rendering, and input handling only.
+  const {
+    sessionId,
+    messages,
+    streaming,
+    genTokens,
+    usage,
+    error,
+    sessions,
+    elapsedMs,
+    send,
+    stop,
+    newChat,
+    openSession,
+    removeSession,
+  } = useChatSession({ enabled: !!user });
+
   const [input, setInput] = useState('');
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [streaming, setStreaming] = useState(false);
-  // Live token meter: genTokens counts streamed deltas (smooth ↓ output between usage events); usage
-  // holds the server-reported cumulative totals (↑ input + exact ↓ output + cached).
-  const [genTokens, setGenTokens] = useState(0);
-  const [usage, setUsage] = useState<{
-    inputTokens: number;
-    outputTokens: number;
-    cachedInputTokens: number;
-  } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  // Live-ticking elapsed time for the in-flight turn (the ⏱ clock in the streaming footer).
-  const [elapsedMs, setElapsedMs] = useState(0);
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const idRef = useRef(0);
-  const abortRef = useRef<AbortController | null>(null);
-  const msgIdRef = useRef<string | null>(null); // server generation id of the in-flight turn
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // When a dataset focus is set ("ask about this dataset"), prefill a question about it.
@@ -149,295 +105,17 @@ export function ChatPanel({ onSelectDataset }: ChatPanelProps) {
     if (chatFocus) setInput(`Какво съдържа наборът „${chatFocus.titleBg}"?`);
   }, [chatFocus]);
 
-  // Tick the elapsed-time clock while a turn streams; resets each turn, stops when it ends.
-  useEffect(() => {
-    if (!streaming) return;
-    const start = Date.now();
-    setElapsedMs(0);
-    const id = setInterval(() => setElapsedMs(Date.now() - start), 100);
-    return () => clearInterval(id);
-  }, [streaming]);
-
-  // On sign-in: load the conversation list and restore the last open conversation (persisted id).
-  useEffect(() => {
-    if (!user) return;
-    let active = true;
-    listSessions()
-      .then((s) => active && setSessions(s))
-      .catch(() => {});
-    const stored = localStorage.getItem(SESSION_KEY);
-    if (stored) {
-      getSession(stored)
-        .then((conv) => {
-          if (!active) return;
-          setSessionId(conv.sessionId);
-          // Re-select the regions the conversation last grounded on, so the map + scope match it.
-          selectRegions(lastGroundedRegions(conv.messages));
-          const loaded = conv.messages.map((m) => ({
-            id: ++idRef.current,
-            role: m.role,
-            content: m.content,
-            ...(m.citations ? { citations: m.citations } : {}),
-            ...(m.usage ? { usage: m.usage } : {}),
-            ...(m.durationMs != null ? { durationMs: m.durationMs } : {}),
-          }));
-          // If a generation was still running when we reloaded, re-attach to its live stream
-          // (mid-stream resume) — append a live assistant bubble and stream into it.
-          if (conv.streaming) {
-            const aid = ++idRef.current;
-            setMessages([...loaded, { id: aid, role: 'assistant', content: '' }]);
-            msgIdRef.current = conv.streaming.messageId;
-            setStreaming(true);
-            const controller = new AbortController();
-            abortRef.current = controller;
-            const startAt = Date.now();
-            let text = '';
-            let cites: Citation[] = [];
-            let finalUsage: TurnUsage | null = null;
-            const patch = () =>
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === aid
-                    ? { ...m, content: text, ...(cites.length ? { citations: cites } : {}) }
-                    : m,
-                ),
-              );
-            setGenTokens(0);
-            setUsage(null);
-            void resumeChat(
-              conv.streaming.messageId,
-              {
-                onToken: (d) => {
-                  text += d;
-                  setGenTokens((n) => n + 1);
-                  patch();
-                },
-                onCitations: (c) => {
-                  cites = c;
-                  patch();
-                },
-                onUsage: (u) => {
-                  finalUsage = u;
-                  setUsage(u);
-                },
-                onAnchors: (a) => {
-                  if (a.geoEntityIds.length > 0) selectRegions(a.geoEntityIds);
-                },
-                onError: setError,
-                onDone: () => {
-                  setStreaming(false);
-                  const dur = Date.now() - startAt;
-                  setMessages((prev) =>
-                    prev.map((m) =>
-                      m.id === aid
-                        ? { ...m, ...(finalUsage ? { usage: finalUsage } : {}), durationMs: dur }
-                        : m,
-                    ),
-                  );
-                  listSessions()
-                    .then(setSessions)
-                    .catch(() => {});
-                },
-              },
-              undefined,
-              controller.signal,
-            ).finally(() => setStreaming(false));
-          } else {
-            setMessages(loaded);
-          }
-        })
-        .catch(() => localStorage.removeItem(SESSION_KEY));
-    }
-    return () => {
-      active = false;
-    };
-  }, [user]);
-
-  // Remember the open conversation across reloads.
-  useEffect(() => {
-    if (!user) return;
-    if (sessionId) localStorage.setItem(SESSION_KEY, sessionId);
-    else localStorage.removeItem(SESSION_KEY);
-  }, [sessionId, user]);
-
   // Keep the latest message in view as the answer streams.
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
-  function patchAssistant(content: string, citations?: Citation[]) {
-    setMessages((prev) => {
-      const copy = [...prev];
-      const last = copy[copy.length - 1];
-      if (last && last.role === 'assistant') {
-        copy[copy.length - 1] = { ...last, content, ...(citations ? { citations } : {}) };
-      }
-      return copy;
-    });
-  }
-
-  /** Attach token usage + reply duration to the finished assistant turn (the trailing bubble). */
-  function stampLastAssistant(usage: TurnUsage | null, durationMs: number) {
-    setMessages((prev) => {
-      const copy = [...prev];
-      const last = copy[copy.length - 1];
-      if (last && last.role === 'assistant') {
-        copy[copy.length - 1] = { ...last, ...(usage ? { usage } : {}), durationMs };
-      }
-      return copy;
-    });
-  }
-
-  /** Stream into the trailing assistant bubble, whether starting a turn (sendChat) or re-attaching to
-   * an in-flight one (resumeChat). Shared callbacks + lifecycle. */
-  async function attachStream(run: (cb: ChatCallbacks, signal: AbortSignal) => Promise<void>) {
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setStreaming(true);
-    setGenTokens(0);
-    setUsage(null);
-    setError(null);
-    const startAt = Date.now();
-    let assistant = '';
-    let cites: Citation[] = [];
-    let finalUsage: TurnUsage | null = null;
-    try {
-      await run(
-        {
-          onSession: setSessionId,
-          onMessage: (id) => {
-            msgIdRef.current = id;
-          },
-          onToken: (delta) => {
-            assistant += delta;
-            setGenTokens((n) => n + 1);
-            patchAssistant(assistant, cites.length > 0 ? cites : undefined);
-          },
-          onCitations: (citations) => {
-            cites = citations;
-            patchAssistant(assistant, cites);
-          },
-          onUsage: (u) => {
-            finalUsage = u;
-            setUsage(u);
-          },
-          onAnchors: (anchor) => {
-            if (anchor.geoEntityIds.length > 0) selectRegions(anchor.geoEntityIds);
-          },
-          onError: (message) => setError(message),
-          onDone: () => {
-            setStreaming(false);
-            // Stamp the finished turn with its token usage + reply duration (kept in the bubble).
-            stampLastAssistant(finalUsage, Date.now() - startAt);
-            listSessions()
-              .then(setSessions)
-              .catch(() => {});
-          },
-        },
-        controller.signal,
-      );
-    } catch {
-      // A user-initiated stop aborts the fetch; that's not an error.
-      if (!controller.signal.aborted) setError('мрежова грешка');
-    } finally {
-      setStreaming(false);
-      abortRef.current = null;
-    }
-  }
-
-  async function send(text?: string) {
+  function submit(text?: string) {
     const question = (text ?? input).trim();
     if (!question || streaming) return;
     setInput('');
-    setMessages((prev) => [
-      ...prev,
-      { id: ++idRef.current, role: 'user', content: question },
-      { id: ++idRef.current, role: 'assistant', content: '' },
-    ]);
-    // Auto-focus the dataset open in the reader: ground the answer in its rows without narrowing
-    // scope. A deliberate chatFocus (scope.datasetIds) takes precedence on the backend.
-    const scope = {
-      ...filterStateToScope(filters),
-      ...(chatFocus ? { datasetIds: [chatFocus.datasetId] } : {}),
-    };
-    await attachStream((cb, signal) =>
-      sendChat(
-        {
-          sessionId,
-          message: question,
-          scope,
-          ...(reader ? { groundingDatasetIds: [reader.datasetId] } : {}),
-        },
-        cb,
-        undefined,
-        signal,
-      ),
-    );
-  }
-
-  function stop() {
-    abortRef.current?.abort(); // stop reading locally
-    if (msgIdRef.current) void stopGeneration(msgIdRef.current); // and stop it server-side
-    setStreaming(false);
-  }
-
-  /** Start a fresh conversation: drop the server session + transcript and clear chat-driven state. */
-  function newChat() {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    setStreaming(false);
-    setMessages([]);
-    setSessionId(null);
-    setError(null);
-    setInput('');
-    setChatFocus(null);
-    setHighlight({ geoEntityIds: [], datasetIds: [] });
-    selectRegions([]); // a fresh conversation starts with no region selection/scope
-  }
-
-  /** Open a saved conversation and load its transcript; re-attach if it's still generating. */
-  async function openSession(id: string) {
-    abortRef.current?.abort();
-    setStreaming(false);
-    try {
-      const conv = await getSession(id);
-      setSessionId(conv.sessionId);
-      setChatFocus(null);
-      setHistoryOpen(false);
-      // Re-select the regions this conversation last grounded on (FR-107) — chips, list, and the
-      // next turn's scope all reflect the reopened conversation.
-      selectRegions(lastGroundedRegions(conv.messages));
-      const loaded = conv.messages.map((m) => ({
-        id: ++idRef.current,
-        role: m.role,
-        content: m.content,
-        ...(m.citations ? { citations: m.citations } : {}),
-        ...(m.usage ? { usage: m.usage } : {}),
-        ...(m.durationMs != null ? { durationMs: m.durationMs } : {}),
-      }));
-      if (conv.streaming) {
-        setMessages([...loaded, { id: ++idRef.current, role: 'assistant', content: '' }]);
-        msgIdRef.current = conv.streaming.messageId;
-        const mid = conv.streaming.messageId;
-        await attachStream((cb, signal) => resumeChat(mid, cb, undefined, signal));
-      } else {
-        setMessages(loaded);
-        setError(null);
-      }
-    } catch {
-      setError('Неуспешно зареждане на разговора.');
-    }
-  }
-
-  async function removeSession(id: string) {
-    try {
-      await deleteSession(id);
-      setSessions((prev) => prev.filter((x) => x.id !== id));
-      if (id === sessionId) newChat();
-    } catch {
-      setError('Неуспешно изтриване на разговора.');
-    }
+    void send(question);
   }
 
   const empty = messages.length === 0;
@@ -479,7 +157,10 @@ export function ChatPanel({ onSelectDataset }: ChatPanelProps) {
                   <div key={s.id} className="group flex items-center gap-1 px-2 hover:bg-accent">
                     <button
                       type="button"
-                      onClick={() => void openSession(s.id)}
+                      onClick={() => {
+                        setHistoryOpen(false);
+                        void openSession(s.id);
+                      }}
                       className={`flex-1 truncate py-1.5 text-left text-sm ${s.id === sessionId ? 'font-medium text-primary' : ''}`}
                     >
                       {s.title || 'Нов разговор'}
@@ -510,7 +191,7 @@ export function ChatPanel({ onSelectDataset }: ChatPanelProps) {
                   <button
                     key={s}
                     type="button"
-                    onClick={() => void send(s)}
+                    onClick={() => submit(s)}
                     className="rounded-lg border bg-card px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
                   >
                     {s}
@@ -608,7 +289,7 @@ export function ChatPanel({ onSelectDataset }: ChatPanelProps) {
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                void send();
+                submit();
               }
             }}
             placeholder="Попитайте за публичните данни…"
@@ -639,7 +320,7 @@ export function ChatPanel({ onSelectDataset }: ChatPanelProps) {
               type="button"
               aria-label="Изпрати"
               disabled={input.trim() === ''}
-              onClick={() => void send()}
+              onClick={() => submit()}
               className="group absolute right-2 bottom-2 flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground transition-all hover:scale-110 hover:bg-primary/90 active:scale-95 disabled:opacity-40 disabled:hover:scale-100"
             >
               <ArrowUp className="size-4" />
