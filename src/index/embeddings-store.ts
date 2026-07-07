@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import { nowIso } from '../lib/time.ts';
+import { nowIso, parseIso, toIso } from '../lib/time.ts';
 
 export interface EmbeddingRow {
   dataset_id: string;
@@ -29,6 +29,20 @@ export function setEmbeddingsMeta(db: Database, modelId: string, dimension: numb
   db.query(
     'UPDATE embeddings_meta SET model_id = ?, dimension = ?, updated_at = ? WHERE id = 1',
   ).run(modelId, dimension, nowIso());
+}
+
+/**
+ * Advance `embeddings_meta.updated_at` so the in-process vector cache (`vector-cache.ts`) observes an
+ * index run's new/purged vectors on its next O(1) stale-check (spec 050 FR-321). Called once at the
+ * end of a `danni index` run that actually changed vectors. Strictly monotonic even when two runs
+ * land in the same millisecond (a non-advancing clock becomes `prev + 1ms`), so a fast re-index is
+ * never masked; the value stays a valid ISO-8601 timestamp.
+ */
+export function bumpEmbeddingsMeta(db: Database): void {
+  const prev = getEmbeddingsMeta(db).updated_at;
+  let next = nowIso();
+  if (prev !== null && next <= prev) next = toIso(parseIso(prev).getTime() + 1);
+  db.query('UPDATE embeddings_meta SET updated_at = ? WHERE id = 1').run(next);
 }
 
 export function getEmbeddingsMeta(db: Database): EmbeddingsMetaRow {

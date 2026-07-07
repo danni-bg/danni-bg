@@ -8,6 +8,8 @@ import { runIndex } from '../../../src/index/run-index.ts';
 import { runMigrations } from '../../../src/store/migrate.ts';
 import { DatasetsRepo } from '../../../src/store/repos/datasets.ts';
 import { EntitiesRepo } from '../../../src/store/repos/entities.ts';
+import { OrganizationsRepo } from '../../../src/store/repos/organizations.ts';
+import { TranslationsRepo } from '../../../src/store/repos/translations.ts';
 
 const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const MIGRATIONS = join(ROOT, 'migrations');
@@ -110,5 +112,76 @@ describe('index.query', () => {
       query: 'zzz-no-such-text-anywhere',
     });
     expect(out.length).toBeLessThanOrEqual(5);
+  });
+
+  it('search and searchByEntity resolve the same EN title + publisher (SC-3 / FR-324)', async () => {
+    // A dataset with an EN title translation, a publisher (also EN-labelled), and an entity link.
+    const orgs = new OrganizationsRepo(s.db);
+    orgs.upsert({
+      id: 'org-nsi',
+      slug: 'nsi',
+      titleBg: 'Национален статистически институт',
+      sourceUrl: 'https://x/org-nsi',
+    });
+    const ds = new DatasetsRepo(s.db);
+    ds.upsert({
+      id: 'd-census',
+      slug: 'census',
+      titleBg: 'Преброяване на населението',
+      descriptionBg: 'Данни от преброяването.',
+      publisherId: 'org-nsi',
+      tags: ['census'],
+      groups: [],
+      sourceUrl: 'https://x/d-census',
+    });
+    const tx = new TranslationsRepo(s.db);
+    tx.upsert({
+      subjectKind: 'dataset_title',
+      subjectId: 'd-census',
+      textBg: 'Преброяване на населението',
+      textEn: 'Population census',
+      translator: 'test',
+      confidence: 0.88,
+    });
+    tx.upsert({
+      subjectKind: 'entity_label',
+      subjectId: 'org:org-nsi',
+      textBg: 'Национален статистически институт',
+      textEn: 'National Statistical Institute',
+      translator: 'test',
+      confidence: 0.77,
+    });
+    const ents = new EntitiesRepo(s.db);
+    ents.upsert({
+      id: 'subject:census',
+      kind: 'named_subject',
+      canonicalLabelBg: 'Преброяване',
+    });
+    ents.attach({
+      datasetId: 'd-census',
+      entityId: 'subject:census',
+      extractor: 'gaz',
+      confidence: 0.9,
+    });
+    await runIndex({ db: s.db, embedder: s.embedder });
+
+    const hybrid = (
+      await search({ db: s.db, embedder: s.embedder, query: 'Преброяване', limit: 10 })
+    ).find((r) => r.datasetId === 'd-census');
+    const byEntity = (
+      await searchByEntity({ db: s.db, embedder: s.embedder, query: '' }, 'subject:census')
+    ).find((r) => r.datasetId === 'd-census');
+
+    expect(hybrid).toBeDefined();
+    expect(byEntity).toBeDefined();
+    // Entity-sourced results must no longer null out the EN title / publisher (the old contract split).
+    expect(byEntity?.title.en).toBe('Population census');
+    expect(byEntity?.title.en).toBe(hybrid?.title.en);
+    expect(byEntity?.title.translationConfidence).toBe(hybrid?.title.translationConfidence ?? null);
+    expect(byEntity?.publisher).toEqual(hybrid?.publisher ?? null);
+    expect(byEntity?.publisher?.title.en).toBe('National Statistical Institute');
+    // matchedEntities stays entity-search-only.
+    expect(byEntity?.matchedEntities?.[0]?.entityId).toBe('subject:census');
+    expect(hybrid?.matchedEntities).toBeUndefined();
   });
 });

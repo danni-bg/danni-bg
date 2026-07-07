@@ -5,7 +5,7 @@ import { EntitiesRepo } from '../store/repos/entities.ts';
 import { OrganizationsRepo } from '../store/repos/organizations.ts';
 import { TranslationsRepo } from '../store/repos/translations.ts';
 import type { Embedder } from './embedder.ts';
-import { listEmbeddings } from './embeddings-store.ts';
+import { type VectorMatrix, getVectorMatrix } from './vector-cache.ts';
 
 export type Lang = 'bg' | 'en' | 'auto';
 
@@ -101,9 +101,62 @@ function resolveCuratedDatasetPath(artifacts: CuratedArtifactRow[], datasetId: s
 
 const RRF_K = 60;
 
-export async function search(opts: QueryOptions): Promise<IndexEntry[]> {
+/** Depth of each retrieval leg (FTS + vector) fed into the RRF fusion. */
+const CANDIDATE_DEPTH = 50;
+
+/** A fused, ranked hit before DB projection — the O(candidates) output of the ranking phase. */
+export interface RankedHit {
+  datasetId: string;
+  score: number;
+  matchKind: IndexEntry['matchKind'];
+}
+
+/**
+ * Top-K by cosine over the resident matrix, allocating O(K) (spec 050 FR-320): instead of scoring
+ * every vector into an O(corpus) array and sorting it, keep a size-K list sorted descending and only
+ * admit a vector that beats the current K-th score. Ranking work is still O(corpus) (a brute-force
+ * scan is inherent without an ANN index), but allocation is bounded to the candidate set.
+ */
+function topKCosine(
+  matrix: VectorMatrix,
+  queryVec: Float32Array,
+  k: number,
+): Array<{ datasetId: string; score: number }> {
+  const top: Array<{ datasetId: string; score: number }> = [];
+  const insert = (datasetId: string, score: number): void => {
+    let lo = 0;
+    let hi = top.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if ((top[mid]?.score ?? Number.NEGATIVE_INFINITY) >= score) lo = mid + 1;
+      else hi = mid;
+    }
+    top.splice(lo, 0, { datasetId, score });
+  };
+  for (let i = 0; i < matrix.ids.length; i++) {
+    const id = matrix.ids[i];
+    const vec = matrix.vectors[i];
+    if (id === undefined || vec === undefined) continue;
+    const score = cosine(queryVec, vec);
+    if (top.length < k) {
+      insert(id, score);
+    } else if (score > (top[top.length - 1]?.score ?? Number.NEGATIVE_INFINITY)) {
+      top.pop();
+      insert(id, score);
+    }
+  }
+  return top;
+}
+
+/**
+ * The ranking phase of hybrid search (spec 050): FTS5 keyword rank ⊕ vector cosine rank fused by RRF,
+ * yielding ranked (datasetId, score, matchKind) pairs. Bounded work per query — one FTS query, one
+ * query embedding, a scan of the cached matrix — with NO per-hit DB projection, so a caller that only
+ * needs ids+scores (the explorer search route, which re-projects hits through the bulk `listLite`
+ * path) pays O(candidates), not O(hits) point queries. `search()` layers projection on top.
+ */
+export async function searchRanked(opts: QueryOptions): Promise<RankedHit[]> {
   const limit = opts.limit ?? 5;
-  const sloSeconds = opts.freshnessSloSeconds ?? 86400;
 
   const ftsResults = opts.db
     .query<{ dataset_id: string }, [string]>(
@@ -114,17 +167,14 @@ export async function search(opts: QueryOptions): Promise<IndexEntry[]> {
   const ftsRanks = new Map<string, number>();
   ftsResults.forEach((r, i) => ftsRanks.set(r.dataset_id, i + 1));
 
-  const vecCandidates = listEmbeddings(opts.db);
+  const matrix = getVectorMatrix(opts.db);
   const vecRanks = new Map<string, number>();
-  if (vecCandidates.length > 0) {
+  if (matrix.ids.length > 0) {
     const [queryVec] = await opts.embedder.embed([opts.query]);
     if (queryVec) {
-      const scored = vecCandidates.map((c) => ({
-        datasetId: c.dataset_id,
-        score: cosine(queryVec, c.vector),
-      }));
-      scored.sort((a, b) => b.score - a.score);
-      scored.slice(0, 50).forEach((s, i) => vecRanks.set(s.datasetId, i + 1));
+      topKCosine(matrix, queryVec, CANDIDATE_DEPTH).forEach((s, i) =>
+        vecRanks.set(s.datasetId, i + 1),
+      );
     }
   }
 
@@ -140,104 +190,121 @@ export async function search(opts: QueryOptions): Promise<IndexEntry[]> {
   const scored = [...candidates.values()].map((c) => {
     const ftsScore = c.ftsRank ? 1 / (RRF_K + c.ftsRank) : 0;
     const vecScore = c.vecRank ? 1 / (RRF_K + c.vecRank) : 0;
-    return { datasetId: c.datasetId, score: ftsScore + vecScore, c };
-  });
-  scored.sort((a, b) => b.score - a.score);
-
-  const winners = scored.slice(0, limit);
-  const datasets = new DatasetsRepo(opts.db);
-  const orgs = new OrganizationsRepo(opts.db);
-  const translations = new TranslationsRepo(opts.db);
-  const artifacts = new CuratedArtifactsRepo(opts.db);
-
-  const out: IndexEntry[] = [];
-  for (const { datasetId, score, c } of winners) {
-    const ds = datasets.get(datasetId);
-    if (!ds) continue;
-    const titleTx = translations.forSubject('dataset_title', datasetId)[0];
-    const org = ds.publisher_id ? orgs.get(ds.publisher_id) : null;
-    const orgTitleTx = org
-      ? translations.forSubject('entity_label', `org:${org.id}`)[0]
-      : undefined;
-
     let matchKind: IndexEntry['matchKind'] = 'hybrid';
     if (c.ftsRank && !c.vecRank) matchKind = 'keyword';
     else if (!c.ftsRank && c.vecRank) matchKind = 'semantic';
-    out.push({
-      datasetId,
-      score,
-      matchKind,
-      title: {
-        bg: ds.title_bg,
-        en: titleTx?.text_en ?? null,
-        translator: titleTx?.translator ?? null,
-        translationConfidence: titleTx?.confidence ?? null,
-      },
-      snippet: null,
-      publisher: org
-        ? {
-            id: org.id,
-            title: {
-              bg: org.title_bg,
-              en: orgTitleTx?.text_en ?? null,
-              translator: orgTitleTx?.translator ?? null,
-              translationConfidence: orgTitleTx?.confidence ?? null,
-            },
-          }
-        : null,
-      sourceUrl: ds.source_url,
-      curatedDatasetPath: resolveCuratedDatasetPath(artifacts.byDataset(datasetId), ds.id),
-      freshness: {
-        lastSyncedAt: ds.last_synced_at,
-        sourceLastModified: ds.metadata_modified,
-        sourceEtagOrHash: ds.source_etag_or_hash,
-        isStale: (Date.now() - new Date(ds.last_synced_at).getTime()) / 1000 > sloSeconds,
-        freshnessSloSeconds: sloSeconds,
-      },
-    });
+    return { datasetId: c.datasetId, score: ftsScore + vecScore, matchKind };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit);
+}
+
+/** Bound repos once per call so both producers (`search`/`searchByEntity`) project identically. */
+interface ProjectionCtx {
+  sloSeconds: number;
+  datasets: DatasetsRepo;
+  orgs: OrganizationsRepo;
+  translations: TranslationsRepo;
+  artifacts: CuratedArtifactsRepo;
+}
+
+function projectionContext(opts: QueryOptions): ProjectionCtx {
+  return {
+    sloSeconds: opts.freshnessSloSeconds ?? 86400,
+    datasets: new DatasetsRepo(opts.db),
+    orgs: new OrganizationsRepo(opts.db),
+    translations: new TranslationsRepo(opts.db),
+    artifacts: new CuratedArtifactsRepo(opts.db),
+  };
+}
+
+/**
+ * Resolve one ranked/entity hit into a full `IndexEntry` — the single source of truth for the
+ * `IndexEntry` contract (spec 050 FR-324). Every producer (hybrid `search`, entity `searchByEntity`,
+ * and their MCP/chat consumers) resolves `title.en`/`translator`/`translationConfidence` and
+ * `publisher` by the same rules, so an entity-sourced result renders the same EN title + publisher as
+ * a hybrid result for the same dataset. Returns null for a dataset that no longer exists.
+ */
+function projectEntry(
+  ctx: ProjectionCtx,
+  datasetId: string,
+  score: number,
+  matchKind: IndexEntry['matchKind'],
+): IndexEntry | null {
+  const ds = ctx.datasets.get(datasetId);
+  if (!ds) return null;
+  const titleTx = ctx.translations.forSubject('dataset_title', datasetId)[0];
+  const org = ds.publisher_id ? ctx.orgs.get(ds.publisher_id) : null;
+  const orgTitleTx = org
+    ? ctx.translations.forSubject('entity_label', `org:${org.id}`)[0]
+    : undefined;
+  return {
+    datasetId,
+    score,
+    matchKind,
+    title: {
+      bg: ds.title_bg,
+      en: titleTx?.text_en ?? null,
+      translator: titleTx?.translator ?? null,
+      translationConfidence: titleTx?.confidence ?? null,
+    },
+    snippet: null,
+    publisher: org
+      ? {
+          id: org.id,
+          title: {
+            bg: org.title_bg,
+            en: orgTitleTx?.text_en ?? null,
+            translator: orgTitleTx?.translator ?? null,
+            translationConfidence: orgTitleTx?.confidence ?? null,
+          },
+        }
+      : null,
+    sourceUrl: ds.source_url,
+    curatedDatasetPath: resolveCuratedDatasetPath(ctx.artifacts.byDataset(datasetId), ds.id),
+    freshness: {
+      lastSyncedAt: ds.last_synced_at,
+      sourceLastModified: ds.metadata_modified,
+      sourceEtagOrHash: ds.source_etag_or_hash,
+      isStale: (Date.now() - new Date(ds.last_synced_at).getTime()) / 1000 > ctx.sloSeconds,
+      freshnessSloSeconds: ctx.sloSeconds,
+    },
+  };
+}
+
+export async function search(opts: QueryOptions): Promise<IndexEntry[]> {
+  const ranked = await searchRanked(opts);
+  const ctx = projectionContext(opts);
+  const out: IndexEntry[] = [];
+  for (const hit of ranked) {
+    const entry = projectEntry(ctx, hit.datasetId, hit.score, hit.matchKind);
+    if (entry) out.push(entry);
   }
   return out;
 }
 
 export async function searchByEntity(opts: QueryOptions, entityId: string): Promise<IndexEntry[]> {
   const limit = opts.limit ?? 50;
-  const sloSeconds = opts.freshnessSloSeconds ?? 86400;
   const entities = new EntitiesRepo(opts.db);
   const datasetIds = entities.datasetsForEntity(entityId);
-  const datasets = new DatasetsRepo(opts.db);
-  const artifacts = new CuratedArtifactsRepo(opts.db);
   const matchedEntity = entities.get(entityId);
+  const matched = [
+    {
+      entityId,
+      kind: matchedEntity?.kind ?? 'unknown',
+      label: {
+        bg: matchedEntity?.canonical_label_bg ?? '',
+        en: matchedEntity?.canonical_label_en ?? null,
+      },
+    },
+  ];
+  const ctx = projectionContext(opts);
   const out: IndexEntry[] = [];
   for (const id of datasetIds.slice(0, limit)) {
-    const ds = datasets.get(id);
-    if (!ds) continue;
-    out.push({
-      datasetId: id,
-      score: 1.0,
-      matchKind: 'entity',
-      title: { bg: ds.title_bg, en: null, translator: null, translationConfidence: null },
-      snippet: null,
-      publisher: null,
-      matchedEntities: [
-        {
-          entityId,
-          kind: matchedEntity?.kind ?? 'unknown',
-          label: {
-            bg: matchedEntity?.canonical_label_bg ?? '',
-            en: matchedEntity?.canonical_label_en ?? null,
-          },
-        },
-      ],
-      sourceUrl: ds.source_url,
-      curatedDatasetPath: resolveCuratedDatasetPath(artifacts.byDataset(id), id),
-      freshness: {
-        lastSyncedAt: ds.last_synced_at,
-        sourceLastModified: ds.metadata_modified,
-        sourceEtagOrHash: ds.source_etag_or_hash,
-        isStale: (Date.now() - new Date(ds.last_synced_at).getTime()) / 1000 > sloSeconds,
-        freshnessSloSeconds: sloSeconds,
-      },
-    });
+    const entry = projectEntry(ctx, id, 1.0, 'entity');
+    if (!entry) continue;
+    entry.matchedEntities = matched;
+    out.push(entry);
   }
   return out;
 }

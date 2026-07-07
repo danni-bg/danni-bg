@@ -27,6 +27,12 @@ export const DEFAULT_BUSY_TIMEOUT_MS = 5000;
 
 export interface OpenDbOptions {
   storeRoot: string;
+  /**
+   * Load the `sqlite-vec` extension (default `false`, spec 050 FR-322). Similarity search runs as
+   * in-process cosine over the cached embedding matrix (`src/index/vector-cache.ts`), so no caller
+   * needs `vec0` — and the vendored binary is absent on a clean checkout. Left as an opt-in seam for
+   * an operator who has provisioned the extension; requesting it without the binary still throws.
+   */
   loadVec?: boolean;
   fileName?: string;
   /** ms a blocked writer queues before erroring (default {@link DEFAULT_BUSY_TIMEOUT_MS}). */
@@ -56,7 +62,7 @@ export function openDb(options: OpenDbOptions): Database {
   // SQLITE_BUSY immediately (a 500-generator). Queue for the timeout instead (spec 043 FR-250).
   db.exec(`PRAGMA busy_timeout = ${options.busyTimeoutMs ?? DEFAULT_BUSY_TIMEOUT_MS};`);
 
-  if (options.loadVec ?? true) loadVecExtension(db);
+  if (options.loadVec ?? false) loadVecExtension(db);
 
   return db;
 }

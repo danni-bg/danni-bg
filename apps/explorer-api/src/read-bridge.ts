@@ -5,8 +5,8 @@
 import type { Database } from 'bun:sqlite';
 import { ENTITY_PREDICATES } from '../../../src/enrich/relations/vocabulary.ts';
 import type { Embedder } from '../../../src/index/embedder.ts';
-import type { IndexEntry, Lang } from '../../../src/index/query.ts';
-import { search, searchByEntity } from '../../../src/index/query.ts';
+import type { IndexEntry, Lang, RankedHit } from '../../../src/index/query.ts';
+import { search, searchByEntity, searchRanked } from '../../../src/index/query.ts';
 import type { CuratedDatasetView } from '../../../src/read/dataset-view.ts';
 import { datasetView } from '../../../src/read/dataset-view.ts';
 import type { GridQuery } from '../../../src/read/resource-grid.ts';
@@ -289,6 +289,22 @@ export class ReadBridge {
               .map(([entityId, confidence]) => ({ entityId, confidence }))
           : [],
       };
+    });
+  }
+
+  /**
+   * Ranking-only hybrid search: fused (datasetId, score, matchKind) hits with no per-hit DB
+   * projection (spec 050 FR-323). The explorer search route resolves these ids through the bulk
+   * `listLite` projection, so a 200-hit query executes a bounded number of statements instead of a
+   * per-hit `view()` fan-out.
+   */
+  searchRanked(query: string, limit?: number): Promise<RankedHit[]> {
+    return searchRanked({
+      db: this.deps.db,
+      embedder: this.deps.embedder,
+      query,
+      freshnessSloSeconds: this.deps.freshnessSloSeconds,
+      ...(limit !== undefined ? { limit } : {}),
     });
   }
 
