@@ -79,6 +79,16 @@ capabilities each have their own spec:
   list/read/delete + generation stream/stop), any-key (`allowAnyKey`: `GET /usage`+`/api-usage`
   self-introspection). Closes the gap where a leaked `read` key could read/delete chat history, stop
   live generations, and overwrite the avatar; a route enumeration test fails on any undeclared surface
+- 041 tenant activation (reachable non-default orgs): fulfils spec 029's FR-128/FR-132 beyond the
+  `default` org. The active org is now an explicit, PERSISTED per-user selection (`users.active_tenant_id`,
+  migration 018) — `requireAuth` resolves it via `TenantsRepo.activeMembership` (falls back to the
+  primary/oldest membership when unset or stale, so a never-switching user is unchanged, FR-235).
+  `POST /api/tenant/switch` (human-only) changes it to any org the caller belongs to (non-membership →
+  404); super-admin `POST/DELETE /api/admin/tenants/:id/members` seed/remove members (any role incl.
+  `owner`) on ANY org, keeping the ≥1-owner invariant; `GET /api/tenant/api-keys` (org-admin, via
+  `listForTenant`) is the tenant-scoped key view. New keys/sessions/usage attribute to the caller's
+  active org (FR-233). API-key requests keep the key's own tenant (keys are tenant-bound). Preserves
+  spec 036's insert-only `addMember` + owner protection — builds on 027/029
 - 043 store operational safety: the one `store/danni.sqlite` now holds SaaS state alongside the
   mirror, so `openDb` sets `PRAGMA busy_timeout` (5s, `DEFAULT_BUSY_TIMEOUT_MS`) — a second writer
   (pipeline vs. serving) queues instead of throwing `SQLITE_BUSY`; a `danni backup <dest>` CLI takes a
