@@ -92,8 +92,9 @@ export interface AppContext {
   settings?: PlatformSettingsRepo;
   /** Kratos public base URL (for the logout flow URL). */
   kratosPublicUrl?: string;
-  /** Validate a Kratos session cookie directly (single-port mode, no Oathkeeper). When omitted, only
-   * Oathkeeper's injected X-User-* headers are trusted (used by hermetic tests). */
+  /** Validate a Kratos session cookie directly (single-port mode, no Oathkeeper). When omitted, the
+   * only session path is Oathkeeper's injected X-User-* headers — honored solely behind the
+   * TRUST_PROXY_AUTH_HEADERS opt-in (spec 034; hermetic tests enable it in their setup). */
   sessionResolver?: SessionResolver;
 }
 

@@ -18,8 +18,12 @@ single-port origin and travels through the `/kratos` proxy. Clicking a recovery 
 `:14433` is internal-only (proxy upstream + the server-side `whoami` call).
 
 **Oathkeeper (optional).** If you front the stack with Oathkeeper, it validates the
-session and injects `X-User-*` headers, which the backend trusts in preference to its own
-whoami call. The compose file still includes it for that deployment style.
+session and injects `X-User-*` headers. The backend honors those headers **only** when
+`TRUST_PROXY_AUTH_HEADERS=true` is set (spec 034) — setting it is an operator assertion that
+Oathkeeper is the *sole* path to the app port (nothing can reach `:8790` directly), since a
+directly-reachable app would accept forged headers. With the flag off (the default, and the
+single-port deployment) the headers are ignored and the backend does its own whoami call.
+The compose file still includes Oathkeeper for that deployment style.
 
 ## Components & ports (14xxx/15xxx band — avoids the looper stack's 34xxx)
 
@@ -61,6 +65,10 @@ credentials over an unencrypted connection, and Mailpit accepts unauthenticated 
 
 - `kratos --dev` auto-runs migrations and relaxes some checks — **dev only**.
 - Secrets in `kratos.yaml` (`cookie`, `cipher`) are placeholders — **rotate for any non-local deploy**.
+- **Mailpit is dev-only** (spec 037). Recovery/verification emails carry account-takeover links, so a
+  production deploy must set `COURIER_SMTP_CONNECTION_URI` to a real SMTP relay — required alongside
+  `KRATOS_SECRETS_COOKIE`/`KRATOS_SECRETS_CIPHER` by the `check-secrets` gate, which also rejects
+  Mailpit/localhost-shaped URIs. The prod overlay never starts Mailpit (no `:14438`).
 - Identity schema is minimal (email + name). Roles/tiers live in the danni app DB
   (`users.role`), not in Kratos — see the spec.
 - **Passkeys (WebAuthn).** The `passkey` method is enabled (rp id `localhost`, origins `:8790` +

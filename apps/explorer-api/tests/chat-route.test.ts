@@ -2,7 +2,7 @@
 // tool-wrapper tests. No live LLM — the provider seam is injected (Constitution VI).
 
 import type { Database } from 'bun:sqlite';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
@@ -23,6 +23,15 @@ import { ProviderError } from '../src/chat/providers.ts';
 import { SessionStore } from '../src/chat/session.ts';
 import { buildTools } from '../src/chat/tools.ts';
 import { ReadBridge } from '../src/read-bridge.ts';
+
+// This suite drives gated routes via X-User-* headers, which requires the explicit trust opt-in
+// (spec 034 FR-164; hermetic — no live Kratos, Constitution VI).
+beforeAll(() => {
+  process.env.TRUST_PROXY_AUTH_HEADERS = 'true';
+});
+afterAll(() => {
+  delete process.env.TRUST_PROXY_AUTH_HEADERS;
+});
 
 const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const usage = {

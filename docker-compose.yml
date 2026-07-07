@@ -1,7 +1,8 @@
 # Local Ory identity stack for danni-bg (spec 019). Kratos owns identities in its
 # OWN Postgres; the danni app keeps its data in SQLite (store/danni.sqlite) — untouched.
 # Oathkeeper fronts the gated API routes (/api/{chat,admin,auth}), validates the Kratos
-# session, and injects X-User-* headers that the Hono backend trusts.
+# session, and injects X-User-* headers — honored by the Hono backend only behind the
+# TRUST_PROXY_AUTH_HEADERS opt-in (spec 034; default off, cookie auth instead).
 #
 # Dev: docker compose up -d  →  bun run explorer:api (host :8790)  →  vite (host :5173).
 # Ports use a 14xxx/15xxx band to avoid colliding with the sibling looper stack (34xxx).
@@ -51,6 +52,11 @@ services:
       - ./infra/ory/templates:/etc/config/kratos/templates:ro
     environment:
       DSN: postgres://kratos:kratos@kratos-postgres:5432/kratos?sslmode=disable
+      # Courier SMTP (Ory env mapping → courier.smtp.connection_uri). Dev default: the Mailpit
+      # catcher, no-auth plaintext — Kratos refuses AUTH over an unencrypted connection and Mailpit
+      # accepts unauthenticated mail, so this exact combo is deliberate. The prod overlay REQUIRES a
+      # real relay here instead (spec 037).
+      COURIER_SMTP_CONNECTION_URI: ${COURIER_SMTP_CONNECTION_URI:-smtp://mailpit:1025/?disable_starttls=true}
     depends_on:
       kratos-postgres:
         condition: service_healthy
@@ -88,6 +94,8 @@ services:
 
   # Mailpit catches dev email (Kratos courier → mailpit:1025). Single self-contained port for the
   # UI+API (8025), so — unlike Mailslurper — its web UI never reads another instance's mailbox.
+  # DEV ONLY: the unauthenticated UI exposes every recovery/verification link; the prod overlay
+  # disables this service entirely (spec 037).
   mailpit:
     image: axllent/mailpit:latest
     container_name: danni-mailpit

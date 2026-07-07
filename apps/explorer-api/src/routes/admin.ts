@@ -153,7 +153,10 @@ export function adminRoutes(
     });
   }
 
-  // Super-admin org management (spec 029 FR-132): list every org + create a new one.
+  // Super-admin org management (spec 029 FR-132): list every org + create a new one. Reviewed for
+  // spec 036 FR-183: no member/role mutations are exposed here, so the zero-owner invariant
+  // (FR-182) cannot be violated from this surface; any future member mutation added here may bypass
+  // the owner-CALLER rule (a platform admin outranks org owners) but must keep ≥1 owner per org.
   if (tenants) {
     app.get('/tenants', (c) => c.json({ tenants: tenants.listAll() }));
     app.post('/tenants', async (c) => {

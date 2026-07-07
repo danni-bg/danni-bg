@@ -398,7 +398,8 @@ On top of the read substrate sits an authenticated chat platform (specs 019–02
   (WebAuthn)** for passwordless register/login; **link-mode** recovery/verification (danni-branded
   emails, Mailpit in dev). **Single-port:** the Hono server reverse-proxies `/kratos/*` and validates
   the session itself (`/sessions/whoami`), so `:8790` stands alone (Oathkeeper optional; its
-  `X-User-*` headers still honored when present). Tiers live in the app `users` table
+  `X-User-*` headers are honored only behind the `TRUST_PROXY_AUTH_HEADERS` opt-in — spec 034).
+  Tiers live in the app `users` table
   (`role ∈ {admin,user}`, keyed by `kratos_identity_id`), not Kratos; first admin via `danni admin grant`.
 - **Admin settings (spec 019).** Runtime, admin-editable `platform_settings` (k/v): the chat's LLM
   provider (kind/model/baseUrl/apiKey, API key masked) + toggles — resolved per request, so edits
