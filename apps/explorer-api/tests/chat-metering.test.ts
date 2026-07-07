@@ -24,6 +24,7 @@ import { type AppContext, createApp } from '../src/app.ts';
 import { GenerationManager } from '../src/chat/generation-manager.ts';
 import { maxConcurrentOverrun } from '../src/chat/quota.ts';
 import { SessionStore } from '../src/chat/session.ts';
+import { Metrics } from '../src/metrics.ts';
 import { ReadBridge } from '../src/read-bridge.ts';
 
 beforeAll(() => {
@@ -161,6 +162,7 @@ describe('chat metering integrity (spec 039)', () => {
   function appWith(
     model: LanguageModel,
     generations?: GenerationManager,
+    metrics?: Metrics,
   ): ReturnType<typeof createApp> {
     const ctx: AppContext = {
       bridge,
@@ -174,6 +176,7 @@ describe('chat metering integrity (spec 039)', () => {
         selectModel: () => model,
       },
       ...(generations ? { generations } : {}),
+      ...(metrics ? { metrics } : {}),
     };
     return createApp(ctx);
   }
@@ -272,6 +275,20 @@ describe('chat metering integrity (spec 039)', () => {
     expect(body.error.code).toBe('quota_exceeded');
     expect(body.error.details.limit).toBe(50);
     expect(body.error.details.resetsAt).toBeNull();
+  });
+
+  // Spec 045 SC-3 / FR-272: the token-quota 429 increments danni_quota_rejections_total{kind="tokens"}
+  // by exactly the rejection count, distinct from the rate-limit counter.
+  it('spec 045: the token-quota 429 increments the tokens quota-rejection counter', async () => {
+    users.setTokenLimit(userId, 50);
+    tokenUsage.record({ userId, inputTokens: 0, outputTokens: 0, totalTokens: 60 });
+    const metrics = new Metrics();
+    const app = appWith(mockModel([textStep('unused', 1, 1)]), undefined, metrics);
+    expect((await post(app, { message: 'hi' })).status).toBe(429);
+    expect((await post(app, { message: 'hi again' })).status).toBe(429);
+    const snap = metrics.snapshot();
+    expect(snap.quotaRejections).toEqual({ tokens: 2 });
+    expect(snap.rateLimitRejections).toBe(0);
   });
 });
 

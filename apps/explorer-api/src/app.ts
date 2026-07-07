@@ -26,6 +26,11 @@ import { type DatasetLite, hasGeo, liteToPointer, matchesFiltersLite } from './d
 import { expandGeoUnitIds } from './geo-rollup.ts';
 import type { Metrics } from './metrics.ts';
 import { type ApiMeterConfig, chatMeter, dataApiGate } from './middleware/api-metering.ts';
+import {
+  type MetricsGateConfig,
+  metricsAllowed,
+  metricsGateFromEnv,
+} from './middleware/metrics-gate.ts';
 import { RateLimiter } from './middleware/rate-limiter.ts';
 import { requestId } from './middleware/request-id.ts';
 import { requestLog } from './middleware/request-log.ts';
@@ -70,6 +75,9 @@ export interface AppContext {
   readiness?: () => ReadinessReport;
   /** In-process RED metrics (spec 030): when wired, requests are logged + metered and /metrics is exposed. */
   metrics?: Metrics;
+  /** `/metrics` exposure gate (spec 045 FR-273). When omitted, resolved from env + `DANNI_PROFILE`
+   * (bearer token / CIDR allowlist; a non-dev profile with no gate fails closed). Injectable for tests. */
+  metricsGate?: MetricsGateConfig;
   chat?: ChatConfig;
   /** App users repo — gates /api/chat + backs /api/auth (spec 019). */
   users: UsersRepo;
@@ -305,18 +313,23 @@ export function createApp(ctx: AppContext): Hono {
 
   // Prometheus metrics (spec 030 RED, deepened in 032): counters from the registry + scrape-time gauges
   // (active detached generations, index freshness). Scraped by the OTel collector (infra/observability).
+  // Unlike /healthz + /readyz (public probes), /metrics is GATED (spec 045 FR-273): it leaks traffic
+  // volumes, per-tenant labels, and LLM spend. A bearer token / CIDR allowlist admits a scraper; a
+  // non-dev profile with no gate configured fails closed (404), never leaking.
   const metrics = ctx.metrics;
   if (metrics) {
-    app.get('/metrics', (c) =>
-      c.text(
+    const metricsGate = ctx.metricsGate ?? metricsGateFromEnv(process.env);
+    app.get('/metrics', (c) => {
+      if (!metricsAllowed(metricsGate, c)) return c.body(null, 404);
+      return c.text(
         metrics.prometheus({
           danni_active_generations: generations.activeCount(),
           danni_index_stale: ctx.health().isStale ? 1 : 0,
         }),
         200,
         { 'content-type': 'text/plain; version=0.0.4' },
-      ),
-    );
+      );
+    });
   }
 
   // All in-scope datasets, honoring the structured filters (used by list / regions / national /
