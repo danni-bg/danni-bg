@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { HostedApiEmbedder } from '../../../../src/index/embedders/hosted-api.ts';
+import { EmbedderHttpError } from '../../../../src/lib/errors.ts';
 
 describe('index.embedders.hosted-api', () => {
   it('POSTs and parses an OpenAI-style response', async () => {
@@ -43,11 +44,20 @@ describe('index.embedders.hosted-api', () => {
     await expect(e.embed(['a', 'b'])).rejects.toThrow();
   });
 
-  it('throws on non-2xx', async () => {
+  it('throws a typed EmbedderHttpError carrying httpStatus on non-2xx (spec 054 FR-362)', async () => {
     const fetcher = (async () =>
-      new Response('boom', { status: 500 }) as unknown as Response) as unknown as typeof fetch;
+      new Response('boom', { status: 503 }) as unknown as Response) as unknown as typeof fetch;
     const e = new HostedApiEmbedder({ endpointUrl: 'https://api/x', fetcher });
-    await expect(e.embed(['a'])).rejects.toThrow();
+    let caught: unknown;
+    try {
+      await e.embed(['a']);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(EmbedderHttpError);
+    // The numeric status is the classification contract; the message text is free to change.
+    expect((caught as EmbedderHttpError).httpStatus).toBe(503);
+    expect((caught as EmbedderHttpError).details['httpStatus']).toBe(503);
   });
 
   it('handles missing data field defensively', async () => {

@@ -30,6 +30,15 @@ export class CkanApiError extends DanniError {
   }
 }
 
+export class EmbedderHttpError extends DanniError {
+  override readonly name: string = 'EmbedderHttpError';
+  readonly httpStatus: number;
+  constructor(message: string, httpStatus: number, details: Record<string, unknown> = {}) {
+    super('EMBEDDER_HTTP_ERROR', message, { ...details, httpStatus });
+    this.httpStatus = httpStatus;
+  }
+}
+
 export class RetryExhausted extends DanniError {
   override readonly name: string = 'RetryExhausted';
   constructor(message: string, details: Record<string, unknown> = {}) {

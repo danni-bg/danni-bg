@@ -53,8 +53,15 @@ export interface EgovSyncResult {
   datasetEntries: ManifestDatasetEntry[];
 }
 
-const MAX_ORG_PAGES = 12;
+// listOrganisations is paged to EXHAUSTION (until a short page, FR-364), not a fixed cap. This
+// defensive upper bound only guards a portal that never returns a short page and is set high enough
+// to be unreachable in practice (1M organisations); hitting it is logged loudly, never a silent stop.
+const MAX_ORG_PAGES = 10_000;
 const PAGE_SIZE = 100;
+// Sentinel slug prefix marking an organizations row whose real name never resolved (FR-365): a
+// queryable marker (`slug LIKE 'unresolved-org-%'`) so a placeholder publisher is distinguishable
+// from a real one downstream (facets, publisher-derived geo) and by a later backfill.
+const UNRESOLVED_ORG_SLUG_PREFIX = 'unresolved-org-';
 
 function slugify(s: string): string {
   return (
@@ -91,9 +98,18 @@ export async function runEgovSync(opts: EgovSyncOptions): Promise<EgovSyncResult
 
   const orgCache = new Map<number, { uri: string; name: string }>();
   let orgPagesLoaded = 0;
-  const resolveOrg = async (orgId: number | null | undefined): Promise<string | null> => {
+  // Once a short page proves the directory is fully paged, never re-fetch — a still-missing org is
+  // genuinely unresolved, not one more page away (with the cap gone this also avoids re-probing
+  // empty tail pages once per missing publisher).
+  let orgPagesExhausted = false;
+  const resolveOrg = async (
+    orgId: number | null | undefined,
+    datasetUri: string,
+  ): Promise<string | null> => {
     if (orgId === null || orgId === undefined) return null;
-    while (!orgCache.has(orgId) && orgPagesLoaded < MAX_ORG_PAGES) {
+    // Page listOrganisations to exhaustion (FR-364): loop until a short page instead of stopping at
+    // a fixed cap that silently dropped every publisher past #1200 into a placeholder row.
+    while (!orgCache.has(orgId) && !orgPagesExhausted && orgPagesLoaded < MAX_ORG_PAGES) {
       const page = orgPagesLoaded + 1;
       const resp = await opts.client.listOrganisations({
         recordsPerPage: PAGE_SIZE,
@@ -103,13 +119,24 @@ export async function runEgovSync(opts: EgovSyncOptions): Promise<EgovSyncResult
         if (typeof o.id === 'number') orgCache.set(o.id, { uri: o.uri, name: o.name });
       }
       orgPagesLoaded = page;
-      if (resp.organisations.length < PAGE_SIZE) break;
+      if (resp.organisations.length < PAGE_SIZE) orgPagesExhausted = true;
+    }
+    // The defensive bound must be unreachable in practice; hitting it means the portal never sent a
+    // short page — log loudly rather than truncate silently (FR-364).
+    if (!orgPagesExhausted && orgPagesLoaded >= MAX_ORG_PAGES) {
+      log.warn('egov.orgs.page_cap_hit', { pagesLoaded: orgPagesLoaded, cap: MAX_ORG_PAGES });
     }
     const found = orgCache.get(orgId);
     const id = `egov-org-${orgId}`;
+    if (!found) {
+      // Still unresolved after full paging: upsert a placeholder, but mark it (sentinel slug) and
+      // log a warning (org id + dataset uri) so it's a deterministic, queryable marker for
+      // downstream consumers + a later backfill — not a silent `Организация N` row (FR-365).
+      log.warn('egov.org.unresolved', { orgId, datasetUri });
+    }
     orgsRepo.upsert({
       id,
-      slug: found ? slugify(found.name) : id,
+      slug: found ? slugify(found.name) : `${UNRESOLVED_ORG_SLUG_PREFIX}${orgId}`,
       titleBg: found ? found.name : `Организация ${orgId}`,
       sourceUrl: found
         ? `https://data.egov.bg/organisation/profile/${found.uri}`
@@ -182,7 +209,7 @@ export async function runEgovSync(opts: EgovSyncOptions): Promise<EgovSyncResult
       continue;
     }
 
-    const publisherId = await resolveOrg(d.org_id);
+    const publisherId = await resolveOrg(d.org_id, uri);
     datasetsRepo.upsert({
       id: d.uri,
       slug: slugify(d.name),

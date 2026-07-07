@@ -3,6 +3,7 @@ import {
   CkanApiError,
   ConfigError,
   DanniError,
+  EmbedderHttpError,
   MigrationError,
   RetryExhausted,
 } from '../../../src/lib/errors.ts';
@@ -45,6 +46,15 @@ describe('errors specializations', () => {
     expect(e.httpStatus).toBe(503);
     expect(e.details['httpStatus']).toBe(503);
     expect(e.details['x']).toBe(1);
+  });
+
+  it('EmbedderHttpError carries httpStatus (spec 054 FR-362)', () => {
+    const e = new EmbedderHttpError('Embedder https://api/x returned HTTP 429', 429);
+    expect(e).toBeInstanceOf(DanniError);
+    expect(e.name).toBe('EmbedderHttpError');
+    expect(e.code).toBe('EMBEDDER_HTTP_ERROR');
+    expect(e.httpStatus).toBe(429);
+    expect(e.details['httpStatus']).toBe(429);
   });
 
   it('RetryExhausted is a DanniError', () => {
