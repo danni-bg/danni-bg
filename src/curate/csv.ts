@@ -112,16 +112,34 @@ export class CsvCurator implements Curator {
     const bytes = readFileSync(ctx.rawAbsPath);
     const detection = detectEncoding(bytes);
     const text = decodeBytes(bytes, detection.encoding);
-    const transformRules: TransformRule[] = [];
+    const preRules: TransformRule[] = [];
     if (detection.encoding === 'cp1251') {
-      transformRules.push({
+      preRules.push({
         rule: 'utf8-from-windows1251',
         appliedTo: '*',
         params: { reason: detection.reason, confidence: detection.confidence },
       });
     } else if (detection.reason === 'bom') {
-      transformRules.push({ rule: 'cyrillic-strip-bom', appliedTo: '*' });
+      preRules.push({ rule: 'cyrillic-strip-bom', appliedTo: '*' });
     }
+    return curateCsvFromText(text, ctx, preRules);
+  }
+}
+
+/**
+ * Curate already-decoded UTF-8 CSV text into an ndjson tabular artifact + schema. Split from
+ * `CsvCurator.curate` so an in-memory producer (the datastore-JSON curator, which serializes egov
+ * array-of-arrays rows to CSV) reuses the exact same parse → type-inference → ndjson path, keeping
+ * the two entry points byte-identical (spec 049 SC-2). `preRules` carries any transform already
+ * applied to reach this text (e.g. an encoding conversion done by the byte-reading caller).
+ */
+export function curateCsvFromText(
+  text: string,
+  ctx: CurateContext,
+  preRules: TransformRule[] = [],
+): CuratedArtifactOutput {
+  {
+    const transformRules: TransformRule[] = [...preRules];
     const parsed = parseCsv(text);
     transformRules.push({
       rule: 'csv-parse',

@@ -68,7 +68,7 @@ describe('integration.egov-edge-cases', () => {
       // No success row recorded (the write threw before markResourceSuccess).
       expect(rows.every((r) => r.outcome !== 'success')).toBe(true);
       // No file at the final raw path (the blocker is a file, not the captured bytes).
-      expect(existsSync(join(storeRoot, 'raw', 'ds-000', 'ds-000-r0', 'raw.csv'))).toBe(false);
+      expect(existsSync(join(storeRoot, 'raw', 'ds-000', 'ds-000-r0', 'raw.json'))).toBe(false);
       // The lock was released by abort so the next session is not wedged.
       expect(new SyncRunsLockRepo(db).state().is_locked).toBe(0);
     });
@@ -297,7 +297,7 @@ describe('integration.egov-edge-cases', () => {
       });
       const callsAfter1 = { ...catalog.calls.getResourceData };
       // Record the on-disk mtime of an already-captured file.
-      const rawFile = join(storeRoot, 'raw', 'ds-000', 'ds-000-r0', 'raw.csv');
+      const rawFile = join(storeRoot, 'raw', 'ds-000', 'ds-000-r0', 'raw.json');
       const mtimeBefore = statSync(rawFile).mtimeMs;
 
       // Lose the checkpoint (cascades children).

@@ -89,11 +89,17 @@ export class PortalHttp {
     });
   }
 
-  async postJson<T>(
+  /**
+   * POST a JSON body and return the VERBATIM response body text (plus status/headers) — no JSON
+   * parse, so a caller that needs the exact bytes (byte-faithful capture, spec 049 FR-310) gets
+   * them untouched. Retries + robots + rate-limiting are shared with `postJson`, which layers a
+   * parse on top.
+   */
+  async postText(
     url: string,
     payload: unknown,
     extraHeaders: Record<string, string> = {},
-  ): Promise<JsonResponse<T>> {
+  ): Promise<{ status: number; text: string; headers: Headers }> {
     if (!(await this.robots.isAllowed(url, this.userAgent))) {
       throw new Error(`robots.txt disallows ${url}`);
     }
@@ -112,30 +118,35 @@ export class PortalHttp {
             ? { ok: false, error: new Error(`HTTP ${res.status}`), retryAfterMs: retryAfter }
             : { ok: false, error: new Error(`HTTP ${res.status}`) };
         }
-        // A non-JSON body on a final (non-retryable) response is a deterministic
-        // failure (e.g. an HTML error/redirect page). Surface it terminally with
-        // status + content-type + a body excerpt instead of burning the retry
-        // budget on a parse error that will never succeed.
         const text = await res.text();
-        let body: T;
-        try {
-          body = JSON.parse(text) as T;
-        } catch {
-          const ct = res.headers.get('content-type') ?? 'unknown';
-          throw new CkanApiError(
-            `POST ${url} returned non-JSON (status ${res.status}, content-type ${ct}): ${text.slice(0, 200)}`,
-            res.status,
-            { contentType: ct },
-          );
-        }
-        return { ok: true, value: { status: res.status, body, headers: res.headers } };
+        return { ok: true, value: { status: res.status, text, headers: res.headers } };
       } catch (err) {
-        if (err instanceof CkanApiError) throw err; // terminal — do not retry
         return { ok: false, error: err };
       } finally {
         this.rateLimiter.release(host);
       }
     });
+  }
+
+  async postJson<T>(
+    url: string,
+    payload: unknown,
+    extraHeaders: Record<string, string> = {},
+  ): Promise<JsonResponse<T>> {
+    const { status, text, headers } = await this.postText(url, payload, extraHeaders);
+    // A non-JSON body on a final (non-retryable) response is a deterministic failure (e.g. an HTML
+    // error/redirect page). Surface it terminally with status + content-type + a body excerpt
+    // instead of burning the retry budget on a parse error that will never succeed.
+    try {
+      return { status, body: JSON.parse(text) as T, headers };
+    } catch {
+      const ct = headers.get('content-type') ?? 'unknown';
+      throw new CkanApiError(
+        `POST ${url} returned non-JSON (status ${status}, content-type ${ct}): ${text.slice(0, 200)}`,
+        status,
+        { contentType: ct },
+      );
+    }
   }
 
   async download(

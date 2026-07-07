@@ -18,7 +18,10 @@ interface Captured {
 }
 
 function makeClient(
-  responder: (method: string, body: unknown) => { status?: number; json: unknown },
+  responder: (
+    method: string,
+    body: unknown,
+  ) => { status?: number; json: unknown; rawText?: boolean },
   captured: Captured[] = [],
   apiKey?: string,
 ): EgovBgClient {
@@ -27,8 +30,11 @@ function makeClient(
     const body = init?.body ? JSON.parse(init.body as string) : undefined;
     captured.push({ url: u, body });
     const method = u.split('/').pop() ?? '';
-    const { status = 200, json } = responder(method, body);
-    return new Response(JSON.stringify(json), { status }) as unknown as Response;
+    const { status = 200, json, rawText = false } = responder(method, body);
+    // `rawText` sends `json` (a string) as the exact response body — used to assert byte-faithful
+    // capture where JSON.stringify would normalize away the portal's original formatting.
+    const respBody = rawText ? (json as string) : JSON.stringify(json);
+    return new Response(respBody, { status }) as unknown as Response;
   }) as unknown as typeof fetch;
 
   const http = new PortalHttp({
@@ -64,29 +70,45 @@ describe('crawler.egov-bg-client', () => {
     expect(res.resources[0]?.file_format).toBe('CSV');
   });
 
-  it('gets datastore rows (array-of-arrays with a header) and organisations', async () => {
-    const data = await makeClient(fixtureResponder).getResourceData('f3a30929');
-    expect(Array.isArray(data.data)).toBe(true);
-    expect(Array.isArray((data.data as unknown[])[0])).toBe(true);
+  it('returns the datastore response body VERBATIM (byte-faithful capture, spec 049 FR-310)', async () => {
+    // The portal's exact bytes come back untouched — no parse/re-serialize — so `store/raw/` is a
+    // byte-faithful archive. A deliberately non-canonical body (extra spaces the JSON.stringify
+    // normalizer would drop) round-trips identically.
+    const verbatim = '{"success":true,  "data":[["РЕГИОН","БРОЙ"],\n["София","5"]]}';
+    const raw = await makeClient(() => ({ json: verbatim, rawText: true })).getResourceData('vb');
+    expect(raw).toBe(verbatim);
+    const parsed = JSON.parse(raw);
+    expect(Array.isArray(parsed.data)).toBe(true);
+    expect(Array.isArray(parsed.data[0])).toBe(true);
     const orgs = await makeClient(fixtureResponder).listOrganisations();
     expect(orgs.organisations.length).toBeGreaterThan(0);
   });
 
   it('accepts an empty datastore response with no data field (live {success:true})', async () => {
-    // The live API omits `data` for an empty resource — it must parse, not raise a schema violation.
-    const res = await makeClient(() => ({ json: { success: true } })).getResourceData('empty');
-    expect(res.success).toBe(true);
-    expect(res.data).toBeUndefined();
+    // The live API omits `data` for an empty resource — capture stores it verbatim, not a failure.
+    const raw = await makeClient(() => ({ json: { success: true } })).getResourceData('empty');
+    expect(raw).toBe('{"success":true}');
   });
 
   it('accepts a plain-string datastore response (free-text/ASCII table)', async () => {
     // Some resources return `data` as a pre-formatted text table (a string), not rows/object.
     const text = '   +----+\n   | No |\n   +----+\n';
-    const res = await makeClient(() => ({ json: { success: true, data: text } })).getResourceData(
+    const raw = await makeClient(() => ({ json: { success: true, data: text } })).getResourceData(
       'txt',
     );
-    expect(res.success).toBe(true);
-    expect(res.data).toBe(text);
+    expect(JSON.parse(raw).data).toBe(text);
+  });
+
+  it('throws on a {success:false} error envelope from getResourceData', async () => {
+    const client = makeClient(() => ({ json: { success: false, error: { type: 'NotFound' } } }));
+    await expect(client.getResourceData('x')).rejects.toThrow(
+      /egov-bg getResourceData failed: NotFound/,
+    );
+  });
+
+  it('throws terminally on a non-JSON getResourceData body (e.g. an HTML error page)', async () => {
+    const client = makeClient(() => ({ json: '<html>err</html>', rawText: true }));
+    await expect(client.getResourceData('x')).rejects.toThrow(/returned non-JSON/);
   });
 
   it('sends method as the URL path segment and POSTs a JSON body', async () => {

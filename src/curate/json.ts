@@ -24,9 +24,9 @@ export class JsonCurator implements Curator {
     const bytes = readFileSync(ctx.rawAbsPath);
     const detection = detectEncoding(bytes);
     const text = decodeBytes(bytes, detection.encoding);
-    const transformRules: TransformRule[] = [];
+    const preRules: TransformRule[] = [];
     if (detection.encoding === 'cp1251') {
-      transformRules.push({ rule: 'utf8-from-windows1251', appliedTo: '*' });
+      preRules.push({ rule: 'utf8-from-windows1251', appliedTo: '*' });
     }
     let parsed: unknown;
     try {
@@ -36,22 +36,37 @@ export class JsonCurator implements Curator {
         `JsonCurator failed to parse ${ctx.resource.source_url}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    const root: JsonShapeSchema['rootShape'] = Array.isArray(parsed) ? 'array' : 'object';
-    const schema: JsonShapeSchema = {
-      kind: 'json',
-      encoding: 'utf-8',
-      rootShape: root,
-      transformRules,
-    };
-    const dir = join(ctx.storeRoot, 'curated', curatedRelDir(ctx.resource));
-    ensureDir(dir);
-    writeFileSync(join(dir, 'data.json'), `${JSON.stringify(parsed, null, 2)}\n`);
-    writeFileSync(join(dir, 'schema.json'), `${JSON.stringify(schema, null, 2)}\n`);
-    return {
-      kind: 'json',
-      path: relative(join(ctx.storeRoot, 'curated'), join(dir, 'data.json')),
-      schema,
-      transformRules,
-    };
+    return curateJsonFromValue(parsed, ctx, preRules);
   }
+}
+
+/**
+ * Write an already-parsed JSON value as a normalized `data.json` + schema. Split from
+ * `JsonCurator.curate` so the datastore-JSON curator (spec 049), which already holds the parsed
+ * value from the verbatim envelope, produces the identical artifact without a serialize/re-parse
+ * round-trip. `preRules` carries any transform applied to reach this value.
+ */
+export function curateJsonFromValue(
+  parsed: unknown,
+  ctx: CurateContext,
+  preRules: TransformRule[] = [],
+): CuratedArtifactOutput {
+  const transformRules: TransformRule[] = [...preRules];
+  const root: JsonShapeSchema['rootShape'] = Array.isArray(parsed) ? 'array' : 'object';
+  const schema: JsonShapeSchema = {
+    kind: 'json',
+    encoding: 'utf-8',
+    rootShape: root,
+    transformRules,
+  };
+  const dir = join(ctx.storeRoot, 'curated', curatedRelDir(ctx.resource));
+  ensureDir(dir);
+  writeFileSync(join(dir, 'data.json'), `${JSON.stringify(parsed, null, 2)}\n`);
+  writeFileSync(join(dir, 'schema.json'), `${JSON.stringify(schema, null, 2)}\n`);
+  return {
+    kind: 'json',
+    path: relative(join(ctx.storeRoot, 'curated'), join(dir, 'data.json')),
+    schema,
+    transformRules,
+  };
 }

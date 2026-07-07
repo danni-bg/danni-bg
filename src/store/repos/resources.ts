@@ -2,6 +2,14 @@ import type { Database } from 'bun:sqlite';
 import { nowIso } from '../../lib/time.ts';
 import type { LifecycleState } from './datasets.ts';
 
+/**
+ * `declared_format`/`detected_format` sentinel for an egov datastore capture: `store/raw/` holds the
+ * verbatim `getResourceData` response envelope (spec 049 FR-310), and this hint routes it to the
+ * datastore-JSON curator ahead of the generic JSON curator (FR-312). Defined here — the store layer
+ * both sync and curate already depend on — so neither has to import the other (FR-315).
+ */
+export const EGOV_DATASTORE_FORMAT = 'egov-datastore';
+
 export type ResourceOutcome =
   | 'success'
   | 'failure'
