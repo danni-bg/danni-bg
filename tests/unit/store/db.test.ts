@@ -40,10 +40,23 @@ describe('store.openDb', () => {
     expect(existsSync(join(root, 'alt.sqlite'))).toBe(true);
   });
 
-  it('throws when sqlite-vec extension is requested but missing', () => {
+  it('does not load sqlite-vec by default — opens on a clean checkout without the vendored binary', () => {
+    // spec 050 FR-322 / SC-4: loadVec defaults to false, so openDb never touches the (absent)
+    // vendored extension. Similarity search runs as in-process cosine over the cached matrix.
+    const db = openDb({ storeRoot: globalThis.__TEST_TMP_DIR__ });
+    try {
+      expect(
+        db.query<{ one: number }, []>('SELECT 1 AS one').get()?.one,
+      ).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('throws when sqlite-vec extension is explicitly requested but missing', () => {
     if (vecPathExists()) {
       // operator has provisioned the extension — exercise the success path instead
-      const db = openDb({ storeRoot: globalThis.__TEST_TMP_DIR__ });
+      const db = openDb({ storeRoot: globalThis.__TEST_TMP_DIR__, loadVec: true });
       try {
         expect(typeof vecVersion(db)).toBe('string');
       } finally {
@@ -51,15 +64,17 @@ describe('store.openDb', () => {
       }
       return;
     }
-    expect(() => openDb({ storeRoot: globalThis.__TEST_TMP_DIR__ })).toThrow(/sqlite-vec/);
+    expect(() => openDb({ storeRoot: globalThis.__TEST_TMP_DIR__, loadVec: true })).toThrow(
+      /sqlite-vec/,
+    );
   });
 
-  it('throws on unsupported platform/arch when loadVec is true', () => {
+  it('throws on unsupported platform/arch when loadVec is explicitly requested', () => {
     const original = { platform: process.platform, arch: process.arch };
     Object.defineProperty(process, 'platform', { value: 'sunos', configurable: true });
     Object.defineProperty(process, 'arch', { value: 'mips', configurable: true });
     try {
-      expect(() => openDb({ storeRoot: globalThis.__TEST_TMP_DIR__ })).toThrow(
+      expect(() => openDb({ storeRoot: globalThis.__TEST_TMP_DIR__, loadVec: true })).toThrow(
         /Unsupported platform/,
       );
     } finally {

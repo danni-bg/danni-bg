@@ -163,6 +163,19 @@ capabilities each have their own spec:
   pre-fix scoped campaign (which froze the full portal) re-keys to a fresh row; the `{ all: true }`
   full-portal sentinel stays unversioned and resumes untouched. Adapter-parity tests (SC-4) assert the
   egov filter and `buildScopePredicate` agree for the fields both support
+- 050 search path at corpus scale: the hybrid search hot path no longer re-deserializes the whole
+  embedding corpus per query. `search()` is split into ranking (`searchRanked` — FTS ⊕ cosine RRF over
+  a resident, cached matrix; O(candidates) allocation) and projection; the matrix lives in
+  `src/index/vector-cache.ts` (one copy per DB, WeakMap-keyed) and is invalidated in O(1) against
+  `embeddings_meta.updated_at`, which each index run now bumps once it has written/purged vectors
+  (`bumpEmbeddingsMeta` in `run-index.ts` — the previously-broken seam that only fired on model change,
+  FR-320/321/325). The explorer `?query` route resolves hits through the bulk `listLite` projection
+  (`ReadBridge.searchRanked` + one `listLite()`) instead of a per-hit `bridge.view()` fan-out, so a
+  200-hit query runs a bounded number of statements (FR-323). `searchByEntity` now resolves
+  `title.en`/`translator`/`translationConfidence` + `publisher` by the same rules as `search()` (one
+  `IndexEntry` contract; `matchedEntities` stays entity-only, FR-324). `openDb` no longer loads
+  sqlite-vec by default (`loadVec` defaults to `false`) and opens on a clean checkout without the
+  (absent) vendored binary; the `vec0` path stays an opt-in operator seam (FR-322)
 
 Project constitution: `.specify/memory/constitution.md` (v1.1.1; the locked test runner is `bun:test`).
 <!-- SPECKIT END -->

@@ -36,7 +36,6 @@ import { requestId } from './middleware/request-id.ts';
 import { requestLog } from './middleware/request-log.ts';
 import { requireAuth, requireScope } from './middleware/require-auth.ts';
 import type { ReadBridge } from './read-bridge.ts';
-import { viewToPointer } from './read-bridge.ts';
 import type { ReadinessReport } from './readiness.ts';
 import { aggregateRegions } from './regions-aggregate.ts';
 import { adminRoutes } from './routes/admin.ts';
@@ -52,7 +51,6 @@ import {
   type RegionSummary,
   filterStateSchema,
 } from './schemas.ts';
-import { matchesFilters } from './scope-filter.ts';
 
 export interface HealthInfo {
   lastSyncedAt: string | null;
@@ -382,14 +380,19 @@ export function createApp(ctx: AppContext): Hono {
     let pointers: DatasetPointer[];
     if (f.query.trim() !== '') {
       const ef = expandGeo(f);
-      const hits = await ctx.bridge.search(f.query, undefined, 200);
+      // Ranking-only hits (ids+scores) resolved through the bulk `listLite` projection, not a
+      // per-hit `bridge.view()` fan-out (spec 050 FR-323): a bounded set of queries for all hits,
+      // independent of hit count — parity with the no-query path below. Search-relevance order and
+      // per-hit score are preserved; structured filters use the same predicate as the lite path.
+      const hits = await ctx.bridge.searchRanked(f.query, 200);
+      const liteById = new Map(ctx.bridge.listLite().map((l) => [l.datasetId, l]));
       const seen = new Set<string>();
       pointers = [];
       for (const hit of hits) {
         if (seen.has(hit.datasetId)) continue;
         seen.add(hit.datasetId);
-        const view = ctx.bridge.view(hit.datasetId);
-        if (matchesFilters(view, ef)) pointers.push(viewToPointer(view, hit.score));
+        const lite = liteById.get(hit.datasetId);
+        if (lite && matchesFiltersLite(lite, ef)) pointers.push(liteToPointer(lite, hit.score));
       }
     } else {
       pointers = scopedLites(f).map((l) => liteToPointer(l));

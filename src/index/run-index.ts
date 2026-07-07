@@ -7,6 +7,7 @@ import { IndexFailuresRepo } from '../store/repos/index-failures.ts';
 import { type BatchProgress, type EmbedPair, type NotEmbedded, embedBatch } from './batch-embed.ts';
 import type { Embedder } from './embedder.ts';
 import {
+  bumpEmbeddingsMeta,
   deleteEmbedding,
   ensureEmbeddingsTable,
   getEmbeddingsMeta,
@@ -232,6 +233,7 @@ export async function runIndex(opts: RunIndexOptions): Promise<RunIndexResult> {
   if (opts.full) {
     await rebuildFull(opts, active, currentModelId, indexState, indexFailures, c);
     reconcileOrphans(db, datasets, indexState, indexFailures, c);
+    if (c.vectorsUpdated > 0 || c.purged > 0) bumpEmbeddingsMeta(db);
     log.info('index.completed', toLog(c, 'full'));
     return toResult(c);
   }
@@ -314,6 +316,10 @@ export async function runIndex(opts: RunIndexOptions): Promise<RunIndexResult> {
 
   reconcileOrphans(db, datasets, indexState, indexFailures, c);
 
+  // Advance the vector-cache stale token (spec 050 FR-321) whenever this run touched vectors, so a
+  // running explorer/MCP reloads the corpus on its next query. Purge-only runs bump too: a removed
+  // dataset must drop out of the resident matrix.
+  if (c.vectorsUpdated > 0 || c.purged > 0) bumpEmbeddingsMeta(db);
   log.info('index.completed', toLog(c, 'incremental'));
   return toResult(c);
 }

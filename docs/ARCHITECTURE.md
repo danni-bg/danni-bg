@@ -220,7 +220,7 @@ Migrations are applied in numeric order by a checksum-guarded runner (`src/store
 | `013_chat_sessions` | `chat_sessions` + `chat_messages` | persistent/resumable chat (spec 020) |
 | `014_message_usage_duration` | `chat_messages.usage_json` + `duration_ms` | per-turn tokens + reply time kept on each message (spec 026) |
 
-Vectors are stored as plain BLOBs; similarity search is in-process cosine + Reciprocal-Rank-Fusion with FTS5 (the `sqlite-vec` virtual-table path is a future upgrade for large corpora).
+Vectors are stored as plain BLOBs; similarity search is in-process cosine + Reciprocal-Rank-Fusion with FTS5. The corpus is deserialized **once** into a resident in-process matrix (`src/index/vector-cache.ts`), reused across queries and invalidated in O(1) against `embeddings_meta.updated_at` — which each `danni index` run bumps once it has written/purged vectors (`bumpEmbeddingsMeta`), so a running explorer/MCP reflects new vectors on its next query without a restart (spec 050). Per-query allocation is O(candidates), not O(corpus). The `sqlite-vec` `vec0` virtual-table path remains an optional future upgrade for true ANN; `openDb` does **not** load the extension by default (`loadVec` defaults to `false`) and opens fine without the vendored binary.
 
 ---
 
@@ -305,7 +305,10 @@ flowchart TD
 national / facets) project the store through `ReadBridge.listLite()`: four set-based SQL queries +
 an in-memory join, instead of materializing a full `CuratedDatasetView` (≈7 queries) per dataset. At
 the full ~12k-dataset mirror the per-dataset fan-out cost tens of GB of RAM and timed out; the bulk
-projection answers in tens of milliseconds at ~140 MB. Detail / rows endpoints stay keyed by id; the
+projection answers in tens of milliseconds at ~140 MB. The **?query search route** uses the same
+bulk projection: it resolves ranked hits (`ReadBridge.searchRanked` — ids+scores, no per-hit DB
+projection) through one `listLite()` call instead of a per-hit `view()` fan-out, so a 200-hit query
+runs a bounded set of statements independent of hit count (spec 050 FR-323). Detail / rows endpoints stay keyed by id; the
 `rows` endpoint does **server-side sort + per-column (Excel-style) substring filters** over the whole
 resource (scanning up to a cap, with a `gridTruncated` flag) so the grid is not limited to the loaded
 page.
