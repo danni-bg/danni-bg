@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Embedder } from '../index/embedder.ts';
 import { search, searchByEntity } from '../index/query.ts';
 import { datasetView } from '../read/dataset-view.ts';
+import type { GridQuery } from '../read/resource-grid.ts';
 import { readResourceRows } from '../read/resource-rows.ts';
 
 /**
@@ -133,7 +134,14 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'read_resource',
     description:
-      "Read a resource's curated content off disk. Tabular/NDJSON and JSON-array artifacts return paginated `rows`; a single JSON/GeoJSON document returns `document`; XML/text returns `text`.",
+      "Read a resource's curated content off disk. Tabular/NDJSON and JSON-array artifacts return " +
+      'paginated `rows`; a single JSON/GeoJSON document returns `document`; XML/text returns `text`. ' +
+      'To answer a value question (e.g. "kindergartens in район Панчарево"), pass `filters` — a map of ' +
+      'EXACT column name → case-insensitive substring, e.g. {"rayon":"Панчарево"} — which scans the ' +
+      'whole resource (up to a cap) and returns ONLY matching rows, so prefer it over paging; `sort` ' +
+      'orders the whole resource before pagination. Both apply only to tabular/JSON-array rows. When a ' +
+      'filter/sort saw only the first rows of a larger resource, the response sets `gridTruncated: true`. ' +
+      'Column names come from `mirror_info`.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -148,6 +156,27 @@ export const TOOLS: ToolDef[] = [
           description: 'Rows per page (default 100).',
         },
         offset: { type: 'integer', minimum: 0, description: 'Row offset (default 0).' },
+        filters: {
+          type: 'object',
+          additionalProperties: { type: 'string' },
+          description:
+            'Map of EXACT column name → case-insensitive substring. Returns only rows matching every ' +
+            'entry, scanning up to MAX_GRID_SCAN rows (then `gridTruncated: true`).',
+        },
+        sort: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['col'],
+          properties: {
+            col: { type: 'string', description: 'Column to sort by.' },
+            dir: {
+              type: 'string',
+              enum: ['asc', 'desc'],
+              description: 'Sort direction (default asc).',
+            },
+          },
+          description: 'Server-side sort applied to the whole resource before pagination.',
+        },
       },
     },
     run: async (raw, ctx) => {
@@ -157,11 +186,27 @@ export const TOOLS: ToolDef[] = [
           resourceId: z.string().min(1),
           limit: z.number().int().min(1).max(1000).optional(),
           offset: z.number().int().min(0).optional(),
+          filters: z.record(z.string(), z.string()).optional(),
+          sort: z
+            .object({ col: z.string().min(1), dir: z.enum(['asc', 'desc']).optional() })
+            .optional(),
         })
         .parse(raw);
+      // Same GridQuery the chat/explorer front doors build — exact-column → case-insensitive
+      // substring filter + optional sort, applied to the whole resource before pagination (specs
+      // 009/010/017). Keep the cheap page-slice path when neither is requested.
+      const hasFilters = a.filters !== undefined && Object.keys(a.filters).length > 0;
+      const grid: GridQuery | undefined =
+        hasFilters || a.sort !== undefined
+          ? {
+              sort: a.sort !== undefined ? { col: a.sort.col, dir: a.sort.dir ?? 'asc' } : null,
+              filters: a.filters ?? {},
+            }
+          : undefined;
       return readResourceRows(ctx.db, ctx.storeRoot, a.datasetId, a.resourceId, {
         ...(a.limit !== undefined ? { limit: a.limit } : {}),
         ...(a.offset !== undefined ? { offset: a.offset } : {}),
+        ...(grid !== undefined ? { grid } : {}),
       });
     },
   },

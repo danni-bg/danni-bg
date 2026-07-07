@@ -12,6 +12,7 @@ import {
   TOOLS,
   handleRpc,
 } from '../../../src/mcp/server.ts';
+import { MAX_GRID_SCAN } from '../../../src/read/resource-grid.ts';
 import { runMigrations } from '../../../src/store/migrate.ts';
 import { CuratedArtifactsRepo } from '../../../src/store/repos/curated-artifacts.ts';
 import { DatasetsRepo } from '../../../src/store/repos/datasets.ts';
@@ -183,6 +184,107 @@ describe('mcp.server handleRpc', () => {
     expect(out.total).toBe(2);
     expect(out.rows.length).toBe(1);
     expect(out.truncated).toBe(true);
+  });
+
+  // Rewrite the curated d1/r1 artifact (registered by setup) with richer rows so the grid
+  // params have something to filter/sort. Same on-disk path readResourceRows reads from.
+  function seedRows(rows: unknown[]): void {
+    const rel = join('d1', 'r1', 'data.ndjson');
+    writeFileSync(
+      join(globalThis.__TEST_TMP_DIR__, 'curated', rel),
+      `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`,
+    );
+  }
+
+  function readResource(args: Record<string, unknown>): Promise<JsonRpcResponse | null> {
+    return handleRpc(
+      {
+        jsonrpc: '2.0',
+        id: 20,
+        method: 'tools/call',
+        params: {
+          name: 'read_resource',
+          arguments: { datasetId: 'd1', resourceId: 'r1', ...args },
+        },
+      },
+      ctx,
+    );
+  }
+
+  it('read_resource filters rows via the shared GridQuery (exact column → case-insensitive substring)', async () => {
+    seedRows([
+      { rayon: 'Панчарево', name: 'A' },
+      { rayon: 'Лозенец', name: 'B' },
+      { rayon: 'Панчарево', name: 'C' },
+    ]);
+    // Lowercase query proves the case-insensitive substring match of spec 017.
+    const out = callResult(await readResource({ filters: { rayon: 'панчарево' } })).data as {
+      rows: Array<{ name: string }>;
+      total: number;
+    };
+    expect(out.total).toBe(2);
+    expect(out.rows.map((r) => r.name)).toEqual(['A', 'C']);
+  });
+
+  it('read_resource sorts rows via the shared GridQuery (sort col + dir)', async () => {
+    seedRows([{ n: 2 }, { n: 1 }, { n: 3 }]);
+    const desc = callResult(await readResource({ sort: { col: 'n', dir: 'desc' } })).data as {
+      rows: Array<{ n: number }>;
+    };
+    expect(desc.rows.map((r) => r.n)).toEqual([3, 2, 1]);
+    // dir defaults to asc.
+    const asc = callResult(await readResource({ sort: { col: 'n' } })).data as {
+      rows: Array<{ n: number }>;
+    };
+    expect(asc.rows.map((r) => r.n)).toEqual([1, 2, 3]);
+  });
+
+  it('read_resource still pages after filtering (limit/offset over the filtered view)', async () => {
+    seedRows([
+      { rayon: 'Панчарево', name: 'A' },
+      { rayon: 'Лозенец', name: 'B' },
+      { rayon: 'Панчарево', name: 'C' },
+      { rayon: 'Панчарево', name: 'D' },
+    ]);
+    const page = callResult(
+      await readResource({ filters: { rayon: 'Панчарево' }, limit: 1, offset: 1 }),
+    ).data as { rows: Array<{ name: string }>; total: number; truncated: boolean };
+    expect(page.total).toBe(3);
+    expect(page.rows.map((r) => r.name)).toEqual(['C']);
+    expect(page.truncated).toBe(true);
+  });
+
+  it('read_resource surfaces gridTruncated when a filter sees only the first MAX_GRID_SCAN rows', async () => {
+    seedRows(Array.from({ length: MAX_GRID_SCAN + 1 }, (_, i) => ({ rayon: 'Панчарево', i })));
+    const out = callResult(await readResource({ filters: { rayon: 'Панчарево' }, limit: 1 }))
+      .data as {
+      gridTruncated?: boolean;
+      total: number;
+    };
+    expect(out.gridTruncated).toBe(true);
+    // Only the first MAX_GRID_SCAN rows were scanned, so the filtered total caps there.
+    expect(out.total).toBe(MAX_GRID_SCAN);
+  });
+
+  it('read_resource rejects a malformed filters/sort shape with isError (not a crash)', async () => {
+    seedRows([{ n: 1 }]);
+    expect(callResult(await readResource({ filters: ['not', 'a', 'map'] })).isError).toBe(true);
+    expect(callResult(await readResource({ filters: { rayon: 5 } })).isError).toBe(true);
+    expect(callResult(await readResource({ sort: { dir: 'asc' } })).isError).toBe(true);
+    expect(callResult(await readResource({ sort: { col: 'n', dir: 'sideways' } })).isError).toBe(
+      true,
+    );
+  });
+
+  it('tools/list advertises the read_resource filters + sort parameters', async () => {
+    const r = await handleRpc({ jsonrpc: '2.0', id: 21, method: 'tools/list' }, ctx);
+    const tool = (
+      r?.result as {
+        tools: Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }>;
+      }
+    ).tools.find((t) => t.name === 'read_resource');
+    expect(tool?.inputSchema.properties).toHaveProperty('filters');
+    expect(tool?.inputSchema.properties).toHaveProperty('sort');
   });
 
   it('surfaces tool failures as isError (unknown dataset, bad args, unknown tool)', async () => {

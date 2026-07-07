@@ -130,6 +130,15 @@ capabilities each have their own spec:
   in `docs/backup-restore.md`; per-request `users.last_login_at` / `api_keys.last_used_at` bumps are
   throttled to at most once per 5 min (`repos/last-seen.ts` `bumpDue`), so steady-state authenticated
   reads perform zero writes (timestamps become "last use within N minutes")
+- 053 MCP read parity: the two front doors over the shared read substrate (`src/read`) had drifted —
+  the chat `readResource` tool exposed the spec-017 value-filter (`filters` → `GridQuery`) but the MCP
+  `read_resource` tool (`src/mcp/server.ts`) could only page. The MCP tool now accepts optional
+  `filters` (exact column → case-insensitive substring) + `sort` (`{col, dir?}`), passed straight
+  through to the same `readResourceRows`/`GridQuery` call the chat/explorer use (identical matching
+  rules, `MAX_GRID_SCAN` cap, pagination-after-filter, `gridTruncated` flag — specs 009/010/017
+  unchanged, no parallel filter impl); a malformed `filters`/`sort` returns `isError:true`. A parity
+  test asserts both doors return the same rows for the same `(datasetId, resourceId, filters)`;
+  `docs/CONSUMERS.md` documents the extended contract (FR-350..353)
 
 - 051 translation efficiency: the enrich/translate stage is now incremental. `translateSubjects`
   compares against the stored `(subject kind, subject id, translator)` row and SKIPS a subject whose
