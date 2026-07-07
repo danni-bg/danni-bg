@@ -79,6 +79,13 @@ capabilities each have their own spec:
   list/read/delete + generation stream/stop), any-key (`allowAnyKey`: `GET /usage`+`/api-usage`
   self-introspection). Closes the gap where a leaked `read` key could read/delete chat history, stop
   live generations, and overwrite the avatar; a route enumeration test fails on any undeclared surface
+- 043 store operational safety: the one `store/danni.sqlite` now holds SaaS state alongside the
+  mirror, so `openDb` sets `PRAGMA busy_timeout` (5s, `DEFAULT_BUSY_TIMEOUT_MS`) — a second writer
+  (pipeline vs. serving) queues instead of throwing `SQLITE_BUSY`; a `danni backup <dest>` CLI takes a
+  verified online snapshot (WAL checkpoint + `VACUUM INTO` + `integrity_check`) with a restore runbook
+  in `docs/backup-restore.md`; per-request `users.last_login_at` / `api_keys.last_used_at` bumps are
+  throttled to at most once per 5 min (`repos/last-seen.ts` `bumpDue`), so steady-state authenticated
+  reads perform zero writes (timestamps become "last use within N minutes")
 
 Project constitution: `.specify/memory/constitution.md` (v1.1.1; the locked test runner is `bun:test`).
 <!-- SPECKIT END -->

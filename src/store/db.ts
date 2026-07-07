@@ -22,10 +22,27 @@ function vecExtensionPath(): string {
   return join(PROJECT_ROOT, 'vendor', 'sqlite-vec', dir, `vec0.${ext}`);
 }
 
+/** Default SQLITE_BUSY wait before a blocked writer gives up (spec 043 FR-250). */
+export const DEFAULT_BUSY_TIMEOUT_MS = 5000;
+
 export interface OpenDbOptions {
   storeRoot: string;
   loadVec?: boolean;
   fileName?: string;
+  /** ms a blocked writer queues before erroring (default {@link DEFAULT_BUSY_TIMEOUT_MS}). */
+  busyTimeoutMs?: number;
+}
+
+/** Load the sqlite-vec extension onto an already-open connection (also needed by `VACUUM`/reads of
+ *  vec0 virtual tables on secondary connections). Throws if the vendored binary is missing. */
+export function loadVecExtension(db: Database): void {
+  const extPath = vecExtensionPath();
+  if (!existsSync(extPath)) {
+    throw new Error(
+      `sqlite-vec extension not found at ${extPath}. See vendor/sqlite-vec/README.md for operator setup.`,
+    );
+  }
+  db.loadExtension(extPath);
 }
 
 export function openDb(options: OpenDbOptions): Database {
@@ -34,16 +51,12 @@ export function openDb(options: OpenDbOptions): Database {
   const db = new Database(path, { create: true, readwrite: true });
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec('PRAGMA journal_mode = WAL;');
+  // WAL permits a single writer; `danni sync/curate/index` and the serving layer are now both
+  // writers on this file. Without a busy_timeout a writer that hits the other's lock throws
+  // SQLITE_BUSY immediately (a 500-generator). Queue for the timeout instead (spec 043 FR-250).
+  db.exec(`PRAGMA busy_timeout = ${options.busyTimeoutMs ?? DEFAULT_BUSY_TIMEOUT_MS};`);
 
-  if (options.loadVec ?? true) {
-    const extPath = vecExtensionPath();
-    if (!existsSync(extPath)) {
-      throw new Error(
-        `sqlite-vec extension not found at ${extPath}. See vendor/sqlite-vec/README.md for operator setup.`,
-      );
-    }
-    db.loadExtension(extPath);
-  }
+  if (options.loadVec ?? true) loadVecExtension(db);
 
   return db;
 }

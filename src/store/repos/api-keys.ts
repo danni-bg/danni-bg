@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import { sha256Hex } from '../../lib/hash.ts';
 import { nowIso } from '../../lib/time.ts';
+import { bumpDue } from './last-seen.ts';
 import { DEFAULT_TENANT_ID } from './tenants.ts';
 
 // API keys for machine clients (spec 027). The plaintext secret is `dnk_live_<random>`; only its
@@ -111,7 +112,11 @@ export class ApiKeyRepo {
     return { plaintext: secret, view: toView(row as ApiKeyRow) };
   }
 
-  /** Resolve a presented secret to its key row, rejecting unknown/revoked/expired. Bumps last_used_at. */
+  /**
+   * Resolve a presented secret to its key row, rejecting unknown/revoked/expired. Bumps
+   * `last_used_at` at most once per throttle window (spec 043 FR-254), so a keyed read in steady
+   * state performs no write.
+   */
   resolveBySecret(secret: string, now = nowIso()): ResolveResult {
     if (!secret.startsWith(API_KEY_NAMESPACE)) return { status: 'invalid' };
     const row = this.db
@@ -120,7 +125,9 @@ export class ApiKeyRepo {
     if (!row) return { status: 'invalid' };
     if (row.revoked_at) return { status: 'revoked' };
     if (row.expires_at && row.expires_at <= now) return { status: 'expired' };
-    this.db.query('UPDATE api_keys SET last_used_at = ? WHERE id = ?').run(now, row.id);
+    if (bumpDue(row.last_used_at, now)) {
+      this.db.query('UPDATE api_keys SET last_used_at = ? WHERE id = ?').run(now, row.id);
+    }
     return { status: 'ok', key: row };
   }
 

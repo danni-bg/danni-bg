@@ -74,6 +74,7 @@ The store on disk is the source of truth; every stage is re-runnable and every r
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Full architecture + diagrams (build pipeline **and** the explorer / serving layer) |
 | [docs/CONSUMERS.md](docs/CONSUMERS.md) | Reading the mirror: MCP server, direct-off-disk, machine-readable contracts |
 | [docs/semantic-search.md](docs/semantic-search.md) | Configuring a real embedder for genuine semantic + cross-lingual recall |
+| [docs/backup-restore.md](docs/backup-restore.md) | `danni backup` + restore procedure for the store (mirror + all SaaS state) |
 | [specs/008-map-data-explorer/contracts/](specs/008-map-data-explorer/contracts/) | The explorer HTTP API + chat-tool contracts |
 | [infra/ory/README.md](infra/ory/README.md) | The Ory identity stack (Kratos + Mailpit), single-port mode, passkeys |
 | [specs/019-022-*/](specs/) | Identity + admin settings + passkeys (019), persistent/resumable chat (020), token metering (021), account & chat-UX (022) |

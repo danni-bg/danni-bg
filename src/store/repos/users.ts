@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import { nowIso } from '../../lib/time.ts';
+import { bumpDue } from './last-seen.ts';
 
 export type UserRole = 'admin' | 'user';
 
@@ -56,19 +57,30 @@ export class UsersRepo {
    * Find the user for a Kratos identity, creating it on first sight. Idempotent on
    * `kratos_identity_id`: an existing row has its email/verification refreshed and `last_login_at`
    * bumped (it keeps its role); a new row is inserted with `createRole` (default 'user').
+   *
+   * The `last_login_at` bump is throttled (spec 043 FR-254): in steady state — same profile,
+   * within the window — this performs no write, so an authenticated read is not also a SQLite
+   * write. A changed profile field (email/verification/display name) still writes immediately.
    */
   findOrCreateByKratosId(input: FindOrCreateInput): UserRow {
     const now = input.now ?? nowIso();
     const verified = input.emailVerified ? 1 : 0;
     const existing = this.findByKratosId(input.kratosIdentityId);
     if (existing) {
+      const nameChanged = input.displayName != null && input.displayName !== existing.display_name;
+      const profileChanged =
+        existing.email !== input.email || existing.email_verified !== verified || nameChanged;
+      const loginDue = bumpDue(existing.last_login_at, now);
+      if (!profileChanged && !loginDue) return existing;
       // `display_name` is COALESCEd so a session carrying a name (the Kratos whoami path) keeps it
       // current after a profile edit, while one without (e.g. header-only) leaves the name intact.
+      // `last_login_at` only advances when the throttle window has elapsed.
+      const lastLogin = loginDue ? now : existing.last_login_at;
       this.db
         .query(
           'UPDATE users SET email = ?, email_verified = ?, display_name = COALESCE(?, display_name), last_login_at = ?, updated_at = ? WHERE id = ?',
         )
-        .run(input.email, verified, input.displayName ?? null, now, now, existing.id);
+        .run(input.email, verified, input.displayName ?? null, lastLogin, now, existing.id);
       return this.get(existing.id) as UserRow;
     }
     const id = crypto.randomUUID();

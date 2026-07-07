@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runMigrations } from '../migrate.ts';
 import { ApiKeyRepo, API_KEY_NAMESPACE } from './api-keys.ts';
+import { LAST_SEEN_THROTTLE_MS } from './last-seen.ts';
 
 const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
@@ -62,5 +63,21 @@ describe('ApiKeyRepo', () => {
   it('honours custom scopes', () => {
     const { view } = repo.create({ userId: 'u1', name: 'read-only', scopes: ['read'] });
     expect(view.scopes).toEqual(['read']);
+  });
+
+  it('throttles the last_used_at bump within the window and resumes past it (spec 043 FR-254)', () => {
+    const t0 = '2026-07-07T00:00:00.000Z';
+    const plus = (ms: number) => new Date(Date.parse(t0) + ms).toISOString();
+    const { plaintext } = repo.create({ userId: 'u1', name: 'k', now: t0 });
+
+    // First resolution bumps from null → t0; 100 more inside the window perform no further write.
+    expect(repo.resolveBySecret(plaintext, t0).status).toBe('ok');
+    for (let i = 1; i <= 100; i++) repo.resolveBySecret(plaintext, plus(i * 1000));
+    expect(repo.listForUser('u1')[0]?.lastUsedAt).toBe(t0);
+
+    // Once the window elapses the next resolution advances it again.
+    const later = plus(LAST_SEEN_THROTTLE_MS);
+    repo.resolveBySecret(plaintext, later);
+    expect(repo.listForUser('u1')[0]?.lastUsedAt).toBe(later);
   });
 });
