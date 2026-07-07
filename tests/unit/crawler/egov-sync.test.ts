@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -433,6 +433,97 @@ describe('crawler.egov-sync', () => {
       scope: { datasetIds: [DATASET_URI] },
     });
     expect(new OrganizationsRepo(db).get('egov-org-113')?.title_bg).toBe('Целева организация');
+    db.close();
+  });
+
+  it('pages organisations to exhaustion — resolves a publisher BEYOND the old 1200 cap (FR-364, SC-3)', async () => {
+    const storeRoot = globalThis.__TEST_TMP_DIR__;
+    const db = freshDb(storeRoot);
+    // 14 full pages of decoy orgs (1400 > the retired MAX_ORG_PAGES=12 × 100 = 1200 cap), then the
+    // target org 113 on page 15, then a short page. The old fixed cap stopped at page 12 and left
+    // 113 a silent placeholder; paging to exhaustion must still find its real name.
+    const seen: number[] = [];
+    const client = {
+      listDatasets: async () => ({ success: true, datasets: [] }),
+      getDatasetDetails: async () => fix('getDatasetDetails'), // org_id 113
+      listResources: async () => ({ success: true, resources: [] }),
+      getResourceData: async () => JSON.stringify(fix('getResourceData')),
+      listOrganisations: async ({ pageNumber }: { pageNumber: number }) => {
+        seen.push(pageNumber);
+        if (pageNumber <= 14) {
+          return {
+            success: true,
+            organisations: Array.from({ length: 100 }, (_, i) => ({
+              id: 100_000 + (pageNumber - 1) * 100 + i,
+              uri: `u${pageNumber}-${i}`,
+              name: `Decoy ${pageNumber}-${i}`,
+            })),
+          };
+        }
+        if (pageNumber === 15) {
+          return {
+            success: true,
+            organisations: [{ id: 113, uri: 'u113', name: 'Късно намерена организация' }],
+          };
+        }
+        return { success: true, organisations: [] };
+      },
+    } as unknown as EgovBgClient;
+    await runEgovSyncRun({
+      db,
+      config: testConfig(),
+      client,
+      storeRoot,
+      trigger: 'manual',
+      scope: { datasetIds: [DATASET_URI] },
+    });
+    // It paged past the old cap (page 13+) to reach the org on page 15.
+    expect(Math.max(...seen)).toBe(15);
+    const org = new OrganizationsRepo(db).get('egov-org-113');
+    expect(org?.title_bg).toBe('Късно намерена организация');
+    expect(org?.slug).not.toMatch(/^unresolved-org-/); // resolved → real slug, not the sentinel
+    db.close();
+  });
+
+  it('an unresolvable publisher becomes a marked + logged placeholder, not a silent row (FR-365, SC-3)', async () => {
+    const storeRoot = globalThis.__TEST_TMP_DIR__;
+    const db = freshDb(storeRoot);
+    // The default listOrganisations fixture never contains org 113 (the details fixture's org_id):
+    // after full paging it stays unresolved, so it must be marked (sentinel slug) AND logged.
+    const writes: string[] = [];
+    const spy = spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    try {
+      await capture(storeRoot, db);
+    } finally {
+      spy.mockRestore();
+    }
+    const org = new OrganizationsRepo(db).get('egov-org-113');
+    expect(org).not.toBeNull();
+    // Queryable marker: a deterministic sentinel slug, distinguishable from a real publisher.
+    expect(org?.slug).toBe('unresolved-org-113');
+    expect(org?.title_bg).toBe('Организация 113');
+    // A loud warning carrying the org id + dataset uri was emitted (not a silent placeholder).
+    const warned = writes
+      .map((w) => {
+        try {
+          return JSON.parse(w.trim()) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      })
+      .filter((r): r is Record<string, unknown> => r !== null);
+    expect(
+      warned.some(
+        (r) =>
+          r.event === 'egov.org.unresolved' &&
+          r.level === 'warn' &&
+          r.orgId === 113 &&
+          r.datasetUri === DATASET_URI,
+      ),
+    ).toBe(true);
     db.close();
   });
 

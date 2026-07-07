@@ -74,14 +74,27 @@ export type EmbedErrorClass = { kind: 'transient'; status: number } | { kind: 'c
  * Classify a thrown embedder error (FR-009, R4): HTTP 429 and 5xx are *transient* (retryable);
  * everything else — a length-mismatch ("returned N vectors"), an HTTP 4xx other than 429, or any
  * non-HTTP throw — is *content* (non-retryable), which falls to the FR-004 single-text retry.
+ *
+ * Classification is by the TYPED error's numeric `httpStatus` field (FR-363), never by parsing
+ * `err.message`. An embedder signals an HTTP fault by throwing an error carrying `httpStatus`
+ * (`EmbedderHttpError`, `src/lib/errors.ts`); rewording that error's human-readable message can no
+ * longer silently degrade a 429/5xx into a permanent content failure (spec 054 SC-2). Throws with
+ * no numeric `httpStatus` (length mismatches, network errors, non-Error throws) remain `content`.
  */
 export function classifyEmbedError(err: unknown): EmbedErrorClass {
-  if (!(err instanceof Error)) return { kind: 'content' };
-  const m = /HTTP (\d{3})/.exec(err.message);
-  if (!m || m[1] === undefined) return { kind: 'content' };
-  const status = Number.parseInt(m[1], 10);
+  const status = httpStatusOf(err);
+  if (status === undefined) return { kind: 'content' };
   if (status === 429 || status >= 500) return { kind: 'transient', status };
   return { kind: 'content' };
+}
+
+/** The numeric `httpStatus` carried by a typed HTTP error (e.g. `EmbedderHttpError`), or undefined. */
+function httpStatusOf(err: unknown): number | undefined {
+  if (err !== null && typeof err === 'object' && 'httpStatus' in err) {
+    const status = (err as { httpStatus?: unknown }).httpStatus;
+    if (typeof status === 'number' && Number.isFinite(status)) return status;
+  }
+  return undefined;
 }
 
 interface RetryOptions {

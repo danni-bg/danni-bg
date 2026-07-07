@@ -6,6 +6,12 @@ import {
   embedWithRetry,
 } from '../../../src/index/batch-embed.ts';
 import type { Embedder } from '../../../src/index/embedder.ts';
+import { EmbedderHttpError } from '../../../src/lib/errors.ts';
+
+/** A typed HTTP fault as an embedder produces it (FR-362); classification switches on `httpStatus`. */
+function httpError(status: number, message = `Embedder https://api/x returned HTTP ${status}`) {
+  return new EmbedderHttpError(message, status);
+}
 
 /** Zero-delay seam so the suite stays < 5s (Principle VI). Records the backoff args it was given. */
 function recordingDelay(): { delay: (ms: number) => Promise<void>; waits: number[] } {
@@ -26,7 +32,7 @@ describe('index.batch-embed embedWithRetry (T012, FR-009)', () => {
     let n = 0;
     const embed = (texts: string[]): Promise<Float32Array[]> => {
       n++;
-      if (n === 1) throw new Error('Embedder https://api/x returned HTTP 429');
+      if (n === 1) throw httpError(429);
       return Promise.resolve(texts.map(() => Float32Array.from([1])));
     };
     const { delay } = recordingDelay();
@@ -39,7 +45,7 @@ describe('index.batch-embed embedWithRetry (T012, FR-009)', () => {
     let n = 0;
     const embed = (texts: string[]): Promise<Float32Array[]> => {
       n++;
-      if (n === 1) throw new Error('Embedder https://api/x returned HTTP 503');
+      if (n === 1) throw httpError(503);
       return Promise.resolve(texts.map(() => Float32Array.from([1])));
     };
     const { delay } = recordingDelay();
@@ -62,7 +68,7 @@ describe('index.batch-embed embedWithRetry (T012, FR-009)', () => {
 
   it('rethrows a TransientExhaustedError carrying the status when the budget is exhausted', async () => {
     const embed = (): Promise<Float32Array[]> => {
-      throw new Error('Embedder https://api/x returned HTTP 429');
+      throw httpError(429);
     };
     const { delay } = recordingDelay();
     let caught: unknown;
@@ -77,7 +83,7 @@ describe('index.batch-embed embedWithRetry (T012, FR-009)', () => {
 
   it('calls the injected delay with growing (exponential) backoff arguments', async () => {
     const embed = (): Promise<Float32Array[]> => {
-      throw new Error('Embedder https://api/x returned HTTP 500');
+      throw httpError(500);
     };
     const { delay, waits } = recordingDelay();
     await expect(
@@ -90,7 +96,7 @@ describe('index.batch-embed embedWithRetry (T012, FR-009)', () => {
 
   it('adds jitter to each backoff wait', async () => {
     const embed = (): Promise<Float32Array[]> => {
-      throw new Error('Embedder https://api/x returned HTTP 500');
+      throw httpError(500);
     };
     const { delay, waits } = recordingDelay();
     await expect(
@@ -112,7 +118,7 @@ describe('index.batch-embed embedWithRetry (T012, FR-009)', () => {
     let n = 0;
     const embed = (texts: string[]): Promise<Float32Array[]> => {
       n++;
-      if (n === 1) throw new Error('Embedder https://api/x returned HTTP 429');
+      if (n === 1) throw httpError(429);
       return Promise.resolve(texts.map(() => Float32Array.from([1])));
     };
     // No `delay` → exercises the default realDelay seam; baseDelayMs 0 keeps it instant.
@@ -122,36 +128,44 @@ describe('index.batch-embed embedWithRetry (T012, FR-009)', () => {
   });
 });
 
-describe('index.batch-embed classifyEmbedError (T012)', () => {
-  it('classifies HTTP 429/5xx as transient with their status', () => {
-    expect(classifyEmbedError(new Error('returned HTTP 429'))).toEqual({
-      kind: 'transient',
-      status: 429,
-    });
-    expect(classifyEmbedError(new Error('returned HTTP 500'))).toEqual({
-      kind: 'transient',
-      status: 500,
-    });
-    expect(classifyEmbedError(new Error('returned HTTP 503'))).toEqual({
-      kind: 'transient',
-      status: 503,
-    });
+describe('index.batch-embed classifyEmbedError (T012, spec 054 FR-363)', () => {
+  it('classifies a typed HTTP 429/5xx error as transient with its status', () => {
+    expect(classifyEmbedError(httpError(429))).toEqual({ kind: 'transient', status: 429 });
+    expect(classifyEmbedError(httpError(500))).toEqual({ kind: 'transient', status: 500 });
+    expect(classifyEmbedError(httpError(503))).toEqual({ kind: 'transient', status: 503 });
   });
 
-  it('classifies HTTP 4xx (non-429) as content (non-retryable)', () => {
-    expect(classifyEmbedError(new Error('returned HTTP 400'))).toEqual({ kind: 'content' });
-    expect(classifyEmbedError(new Error('returned HTTP 401'))).toEqual({ kind: 'content' });
+  it('classifies a typed HTTP 4xx (non-429) error as content (non-retryable)', () => {
+    expect(classifyEmbedError(httpError(400))).toEqual({ kind: 'content' });
+    expect(classifyEmbedError(httpError(401))).toEqual({ kind: 'content' });
   });
 
-  it('classifies a length-mismatch as content', () => {
+  it('classifies a length-mismatch (untyped) as content', () => {
     expect(classifyEmbedError(new Error('Embedder returned 1 vectors, expected 2'))).toEqual({
       kind: 'content',
     });
   });
 
-  it('classifies a non-Error / unknown throw as content', () => {
+  it('classifies a non-Error / non-HTTP throw as content', () => {
     expect(classifyEmbedError('boom')).toEqual({ kind: 'content' });
     expect(classifyEmbedError(new Error('something else'))).toEqual({ kind: 'content' });
+  });
+
+  it('classifies by the typed status field, NOT the message — a reworded 503 still backs off', () => {
+    // The regression spec 054 FR-363/SC-2 calls out: the classifier reads `httpStatus`, not the
+    // message. A message with no "HTTP NNN" text (or a misleading one) does not degrade a real
+    // 503 into a permanent content failure, nor promote a content fault into a transient retry.
+    expect(classifyEmbedError(httpError(503, 'service unavailable, please retry'))).toEqual({
+      kind: 'transient',
+      status: 503,
+    });
+    expect(
+      classifyEmbedError(httpError(400, 'bad request — HTTP 500 mentioned but not the cause')),
+    ).toEqual({ kind: 'content' });
+    // An untyped error whose message merely CONTAINS "HTTP 429" is no longer mistaken for transient.
+    expect(classifyEmbedError(new Error('log line: upstream returned HTTP 429 earlier'))).toEqual({
+      kind: 'content',
+    });
   });
 });
 
@@ -388,7 +402,7 @@ describe('index.batch-embed transient exhaustion (T018, FR-004/FR-009, SC-004)',
     const e = new RecordingEmbedder({
       hook: (texts) => {
         // d0 always 429s (batch and single); the rest succeed on single retry.
-        if (texts.includes('text-0')) throw new Error('Embedder https://api/x returned HTTP 429');
+        if (texts.includes('text-0')) throw httpError(429);
         const vectors = texts.map((t) => vec(t, 4));
         return vectors;
       },

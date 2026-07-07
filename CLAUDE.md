@@ -235,5 +235,22 @@ capabilities each have their own spec:
   (`schemas.ts`→zod-only, `sse-events.ts`/`session.ts`→no `bun:sqlite`) so the web type graph never
   pulls server runtime. Transport unification is spec 057; the chat lifecycle hook is spec 058
 
+- 054 pipeline robustness (three independent papercuts, "failure/efficiency behavior is explicit,
+  not incidental"): (a) curator selection sniffed the format by `readFileSync`-ing the WHOLE file to
+  inspect 4KB — then the chosen curator re-read it — doubling curate I/O on the ~16k-resource mirror.
+  `CuratorRegistry.readHead` (`src/curate/registry.ts`) now opens the fd and reads a single ≤4096-byte
+  head (`SNIFF_BYTES`), never the whole file (FR-360/361). (b) the embed-retry classifier regexed
+  `HTTP (\d{3})` out of `err.message`, so rewording `HostedApiEmbedder`'s throw silently degraded
+  every 429/5xx into a permanent `content` failure (no backoff). The embedder now throws a TYPED
+  `EmbedderHttpError` carrying `httpStatus` (`src/lib/errors.ts`) and `classifyEmbedError`
+  (`src/index/batch-embed.ts`) switches on that status field — never the message; a reworded message
+  no longer changes retry behavior (FR-362/363). (c) `resolveOrg` (`src/crawler/egov-sync.ts`) capped
+  org paging at `MAX_ORG_PAGES=12` × 100, silently turning every publisher past #1200 into a
+  placeholder `Организация N` row. It now pages `listOrganisations` to exhaustion (short-page stop;
+  the retained bound is unreachable-high and logs when hit), and a still-unresolvable publisher is
+  upserted with a sentinel `unresolved-org-<id>` slug + a `egov.org.unresolved` warning (org id +
+  dataset uri) so placeholder rows are queryable, not silent (FR-364/365). No migration; 048/049/052
+  preserved
+
 Project constitution: `.specify/memory/constitution.md` (v1.1.1; the locked test runner is `bun:test`).
 <!-- SPECKIT END -->

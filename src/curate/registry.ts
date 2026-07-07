@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from 'node:fs';
+import { closeSync, openSync, readSync, statSync } from 'node:fs';
 import { CsvCurator } from './csv.ts';
 import type { CurateContext, CuratedArtifactOutput, Curator } from './curator.ts';
 import { DatastoreJsonCurator } from './datastore-json.ts';
@@ -57,13 +57,30 @@ export class CuratorRegistry {
   }
 }
 
-function readHead(path: string): Buffer {
+/** Bytes sniffed to pick a curator — a bounded prefix, never the whole file (FR-360). */
+export const SNIFF_BYTES = 4096;
+
+/**
+ * Read at most {@link SNIFF_BYTES} from `path` to pick a curator (FR-360). The chosen curator
+ * re-reads the file in full itself, so sniffing MUST NOT `readFileSync` the whole file — on the
+ * ~16k-resource mirror that doubled curate I/O and fed the ~20GB full-curate RSS. Open the fd,
+ * read a single ≤4KB head buffer, then close. Short files, non-files, and missing paths return an
+ * empty/short buffer exactly as before.
+ */
+export function readHead(path: string): Buffer {
+  let fd: number;
   try {
     const stats = statSync(path);
     if (!stats.isFile()) return Buffer.alloc(0);
+    fd = openSync(path, 'r');
   } catch {
     return Buffer.alloc(0);
   }
-  const buf = readFileSync(path);
-  return buf.subarray(0, Math.min(buf.length, 4096));
+  try {
+    const buf = Buffer.alloc(SNIFF_BYTES);
+    const bytesRead = readSync(fd, buf, 0, SNIFF_BYTES, 0);
+    return buf.subarray(0, bytesRead);
+  } finally {
+    closeSync(fd);
+  }
 }

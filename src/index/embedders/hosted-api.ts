@@ -1,3 +1,4 @@
+import { EmbedderHttpError } from '../../lib/errors.ts';
 import type { Embedder } from '../embedder.ts';
 
 export interface HostedApiEmbedderOptions {
@@ -42,7 +43,13 @@ export class HostedApiEmbedder implements Embedder {
       body: JSON.stringify({ input: texts, model: this.modelId }),
     });
     if (!res.ok) {
-      throw new Error(`Embedder ${this.endpoint} returned HTTP ${res.status}`);
+      // Carry the numeric status on a TYPED error (FR-362): the retry classifier switches on
+      // `httpStatus`, not on this human-readable message — so wording is free to change without
+      // silently downgrading 429/5xx backoff to a permanent content failure (spec 054 SC-2).
+      throw new EmbedderHttpError(
+        `Embedder ${this.endpoint} returned HTTP ${res.status}`,
+        res.status,
+      );
     }
     const body = (await res.json()) as OpenAiEmbeddingResponse;
     const data = body.data ?? [];
