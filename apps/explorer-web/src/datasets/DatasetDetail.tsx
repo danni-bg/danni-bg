@@ -1,22 +1,12 @@
 import { useEffect, useState } from 'react';
+// The GET /api/datasets/:id response shape is single-sourced from the API (spec 059 FR-422).
+import type { DatasetDetailView } from '../../../explorer-api/src/schemas.ts';
 import { Button } from '../components/ui/button.tsx';
 import { Card } from '../components/ui/card.tsx';
 import { buildUrl } from '../lib/api.ts';
 import { cn } from '../lib/cn.ts';
 import { bilingualLabel, freshnessDisplay } from '../lib/format.ts';
 import { useExplorer } from '../store/explorerStore.ts';
-import type { FreshnessBlock } from '../types.ts';
-
-interface DetailView {
-  datasetId: string;
-  titleBg: string;
-  titleEn: string | null;
-  descriptionBg: string;
-  tags: string[];
-  freshness: FreshnessBlock;
-  sourceUrl: string;
-  resources: { resourceId: string; name: string | null; kind: string | null }[];
-}
 
 interface DatasetDetailProps {
   datasetId: string;
@@ -24,7 +14,7 @@ interface DatasetDetailProps {
 }
 
 export function DatasetDetail({ datasetId, onClose }: DatasetDetailProps) {
-  const [detail, setDetail] = useState<DetailView | null>(null);
+  const [detail, setDetail] = useState<DatasetDetailView | null>(null);
   const [error, setError] = useState(false);
   const setChatFocus = useExplorer((s) => s.setChatFocus);
   const openReader = useExplorer((s) => s.openReader);
@@ -36,7 +26,7 @@ export function DatasetDetail({ datasetId, onClose }: DatasetDetailProps) {
     setError(false);
     fetch(buildUrl(`/api/datasets/${encodeURIComponent(datasetId)}`))
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('not found'))))
-      .then((d: DetailView) => {
+      .then((d: DatasetDetailView) => {
         if (!cancelled) setDetail(d);
       })
       .catch(() => {

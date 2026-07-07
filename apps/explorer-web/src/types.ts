@@ -1,89 +1,29 @@
-// Client-side view-model types, mirroring the explorer API response shapes the SPA renders.
-// Kept independent of the backend package so the web build stays decoupled.
+// Frontend view-model types. The API response shapes the SPA renders have a SINGLE definition, owned
+// by the API app, imported here type-only (spec 059). `import type` is erased at build, so the web
+// build stays decoupled (Vite emits no API-app code) while a field renamed on the API breaks the SPA's
+// typecheck instead of silently rendering `undefined`. Only genuinely client-only items are defined
+// below. Sources: view models + filter/scope schemas → apps/explorer-api/src/schemas.ts; the chat
+// grounding payloads (Citation/MapAnchor) → the leaf apps/explorer-api/src/chat/sse-events.ts.
+
+export type {
+  DatasetPointer,
+  FilterState,
+  FreshnessBlock,
+  FreshnessFilter,
+  RegionSummary,
+  ScopeDescriptor,
+} from '../../explorer-api/src/schemas.ts';
+// `Facets`/`FacetItem` on the API are what the SPA rendered as `Facets`/`FacetValue` — same shape.
+export type { Facets, FacetItem as FacetValue } from '../../explorer-api/src/schemas.ts';
+export type { Citation, MapAnchor } from '../../explorer-api/src/chat/sse-events.ts';
+
+// ---- Client-only ----
 
 export type Lang = 'bg' | 'en';
-export type FreshnessFilter = 'fresh' | 'stale' | 'any';
 
-export interface FreshnessBlock {
-  lastSyncedAt: string;
-  sourceLastModified: string | null;
-  sourceEtagOrHash: string | null;
-  isStale: boolean;
-  freshnessSloSeconds: number;
-}
-
-export interface FilterState {
-  tags: string[];
-  publisherIds: string[];
-  geoUnitIds: string[];
-  freshness: FreshnessFilter;
-  query: string;
-  includeWithdrawn: boolean;
-}
-
-/** One value of a facet, with how many in-scope datasets it would yield (drives the filter panel). */
-export interface FacetValue {
-  id: string;
-  labelBg: string;
-  labelEn?: string | null;
-  count: number;
-}
-
-export interface Facets {
-  tags: FacetValue[];
-  publishers: FacetValue[];
-  freshnessBuckets: { id: string; count: number }[];
-}
-
-export interface ScopeDescriptor {
-  tags?: string[];
-  publisherIds?: string[];
-  geoUnitIds?: string[];
-  datasetIds?: string[];
-  freshness?: FreshnessFilter;
-  includeWithdrawn?: boolean;
-  query?: string;
-}
-
-export interface DatasetPointer {
-  datasetId: string;
-  titleBg: string;
-  titleEn: string | null;
-  translationConfidence: number | null;
-  publisher: { id: string; titleBg: string } | null;
-  tags: string[];
-  freshness: FreshnessBlock;
-  geoEntityIds: string[];
-  sourceUrl: string;
-  score: number | null;
-}
-
-export interface RegionSummary {
-  entityId: string | null;
-  level: 'oblast' | 'municipality';
-  labelBg: string;
-  labelEn: string | null;
-  boundaryFeatureId: string;
-  datasetCount: number;
-  hasData: boolean;
-  maxConfidence: number;
-  /** For municipalities: parent oblast entity id (drives map drill-down). */
-  oblastEntityId?: string | null;
-  flagged?: 'unlinked';
-}
-
-export interface Citation {
-  datasetId: string;
-  titleBg: string;
-  sourceUrl: string;
-  freshness: FreshnessBlock;
-}
-
-export interface MapAnchor {
-  geoEntityIds: string[];
-  datasetIds: string[];
-}
-
+/** The SPA's read view of a resource's rows/document/text (GET …/resources/:id). A deliberately
+ * reduced projection of the API's `ResourceContent` — the SPA never uses `curatedPath` and treats
+ * `kind` as an opaque label — so it is defined here rather than shared. */
 export interface ResourceContent {
   datasetId: string;
   resourceId: string;
@@ -99,7 +39,7 @@ export interface ResourceContent {
   gridTruncated?: boolean;
 }
 
-export const EMPTY_FILTERS: FilterState = {
+export const EMPTY_FILTERS: import('../../explorer-api/src/schemas.ts').FilterState = {
   tags: [],
   publisherIds: [],
   geoUnitIds: [],

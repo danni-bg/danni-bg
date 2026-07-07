@@ -204,6 +204,21 @@ capabilities each have their own spec:
   router harmlessly (FR-414). The `sse.ts`/`dispatchSSEEvent`/`sendChat`/`resumeChat` transport layer
   is preserved unchanged; the hook composes it. Injectable transport/api/storage give `bun:test`
   coverage for send, resume, abort- and network-failure-during-resume, and new/open/delete (FR-415)
+- 059 single-source frontend API types: the SPA no longer hand-mirrors the API's response shapes —
+  every payload type has ONE definition, owned by the API app and consumed by the web app via
+  `import type` only (erased at build, so the decoupled Vite bundle emits no server code; a backend
+  field rename now breaks `bun run --cwd apps/explorer-web typecheck` instead of silently rendering
+  `undefined`). `apps/explorer-web/src/types.ts` is now type-only re-exports from
+  `apps/explorer-api/src/schemas.ts` (`DatasetPointer`/`RegionSummary`/`Facets`/`FilterState`/…) +
+  the leaf `chat/sse-events.ts` (`Citation`/`MapAnchor`), plus only the client-only `Lang`/
+  `EMPTY_FILTERS`/`ResourceContent` (a reduced read view). `DatasetDetail.tsx` imports
+  `DatasetDetailView` (no inline `DetailView`); `lib/meApi.ts` imports the sessions-route shapes
+  (`SessionSummary`/`ResumedSession`/`ChatMessage`) from `chat/session.ts`. The chat SSE contract is
+  one shared `ChatSSEEventMap` (`chat/sse-events.ts`): the server serializes via `chatSSE(event,
+  payload)` and `dispatchSSEEvent` decodes via `parseEventData<ChatSSEEventMap[...]>`, so an
+  event/field change breaks both sides (FR-420..425). Web-facing sources are leaf modules
+  (`schemas.ts`→zod-only, `sse-events.ts`/`session.ts`→no `bun:sqlite`) so the web type graph never
+  pulls server runtime. Transport unification is spec 057; the chat lifecycle hook is spec 058
 
 Project constitution: `.specify/memory/constitution.md` (v1.1.1; the locked test runner is `bun:test`).
 <!-- SPECKIT END -->

@@ -1,6 +1,10 @@
 // Chat streaming client (T050). The event→callback dispatch is a pure function (unit-tested); the
 // sendChat IO wrapper reads the SSE body via the tested decoder and forwards decoded events to it.
 
+// The SSE event→payload contract is single-sourced from the API (spec 059 FR-423): each
+// parseEventData<...> below is keyed off `ChatSSEEventMap`, so renaming an event/field there breaks
+// this dispatch at compile time.
+import type { ChatSSEEventMap } from '../../../explorer-api/src/chat/sse-events.ts';
 import type { Citation, MapAnchor, ScopeDescriptor } from '../types.ts';
 import { type SSEEvent, createSSEDecoder, parseEventData } from './sse.ts';
 
@@ -33,31 +37,27 @@ export interface ChatRequestBody {
 export function dispatchSSEEvent(ev: SSEEvent, cb: ChatCallbacks): void {
   switch (ev.event) {
     case 'session':
-      cb.onSession?.(parseEventData<{ sessionId: string }>(ev).sessionId);
+      cb.onSession?.(parseEventData<ChatSSEEventMap['session']>(ev).sessionId);
       return;
     case 'message':
-      cb.onMessage?.(parseEventData<{ messageId: string }>(ev).messageId);
+      cb.onMessage?.(parseEventData<ChatSSEEventMap['message']>(ev).messageId);
       return;
     case 'token':
-      cb.onToken?.(parseEventData<{ delta: string }>(ev).delta);
+      cb.onToken?.(parseEventData<ChatSSEEventMap['token']>(ev).delta);
       return;
     // The server still emits a `tool` status event; with no tool-status UI it has no consumer, so it
     // falls through the switch harmlessly (spec 058 FR-414 — the server contract is untouched).
     case 'citations':
-      cb.onCitations?.(parseEventData<{ citations: Citation[] }>(ev).citations);
+      cb.onCitations?.(parseEventData<ChatSSEEventMap['citations']>(ev).citations);
       return;
     case 'anchors':
-      cb.onAnchors?.(parseEventData<MapAnchor>(ev));
+      cb.onAnchors?.(parseEventData<ChatSSEEventMap['anchors']>(ev));
       return;
     case 'usage':
-      cb.onUsage?.(
-        parseEventData<{ inputTokens: number; outputTokens: number; cachedInputTokens: number }>(
-          ev,
-        ),
-      );
+      cb.onUsage?.(parseEventData<ChatSSEEventMap['usage']>(ev));
       return;
     case 'error':
-      cb.onError?.(parseEventData<{ message: string }>(ev).message);
+      cb.onError?.(parseEventData<ChatSSEEventMap['error']>(ev).message);
       return;
     case 'done':
       cb.onDone?.();
