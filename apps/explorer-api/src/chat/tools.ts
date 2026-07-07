@@ -7,7 +7,7 @@ import { type ToolSet, tool } from 'ai';
 import { z } from 'zod';
 import type { CuratedDatasetView } from '../../../../src/read/dataset-view.ts';
 import type { ReadBridge } from '../read-bridge.ts';
-import { viewToDetail } from '../read-bridge.ts';
+import { viewToDetail, viewToPointer } from '../read-bridge.ts';
 import type { ScopeDescriptor } from '../schemas.ts';
 import { capDatasetDetail, capResourceContent } from './cap.ts';
 import { inScope } from './scope.ts';
@@ -23,16 +23,17 @@ export interface BuildToolsResult {
 // Shared with the RAG fallback path (run.ts).
 export const GEO_SCOPED_SEARCH_LIMIT = 200;
 
+// The chat tool payload is a deliberate MINIMAL projection over the shared `viewToPointer`
+// (read-bridge.ts) — only the fields the model needs, keeping the per-result payload small for
+// context-size reasons (FR-376). Derived from `viewToPointer` so a pointer-shape change lands in
+// exactly one mapper; the `translationConfidence`/`tags`/`geoEntityIds` it also computes are dropped
+// here on purpose.
 function pointer(view: CuratedDatasetView, score: number | null) {
-  return {
-    datasetId: view.datasetId,
-    titleBg: view.title.bg,
-    titleEn: view.title.en,
-    publisher: view.publisher ? { id: view.publisher.id, titleBg: view.publisher.title.bg } : null,
-    sourceUrl: view.sourceUrl,
-    freshness: view.freshness,
+  const { datasetId, titleBg, titleEn, publisher, sourceUrl, freshness } = viewToPointer(
+    view,
     score,
-  };
+  );
+  return { datasetId, titleBg, titleEn, publisher, sourceUrl, freshness, score };
 }
 
 export function buildTools(bridge: ReadBridge, scope: ScopeDescriptor): BuildToolsResult {

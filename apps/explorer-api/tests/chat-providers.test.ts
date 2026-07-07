@@ -1,5 +1,28 @@
 import { describe, expect, it } from 'bun:test';
-import { ProviderError, selectModel, serverDefaultFromEnv } from '../src/chat/providers.ts';
+import type { z } from 'zod';
+import type { llmSettingSchema } from '../src/admin/settings-schema.ts';
+import {
+  ProviderError,
+  type ServerDefault,
+  selectModel,
+  serverDefaultFromEnv,
+} from '../src/chat/providers.ts';
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
+  ? true
+  : false;
+
+describe('provider shape (spec 055 FR-374)', () => {
+  it('ServerDefault kind is derived from the canonical llmSettingSchema enum (SC-4, type-level)', () => {
+    // Adding a provider `kind` is a one-line edit to the schema's enum; this compiles only while the
+    // two `kind` unions stay identical, so it fails to build the moment they diverge.
+    type SchemaKind = z.infer<typeof llmSettingSchema>['kind'];
+    const assertKindsEqual = (
+      eq: Equal<ServerDefault['kind'], SchemaKind> extends true ? true : never,
+    ) => eq;
+    expect(assertKindsEqual(true)).toBe(true);
+  });
+});
 
 describe('serverDefaultFromEnv', () => {
   it('returns null when provider or model is missing/invalid', () => {

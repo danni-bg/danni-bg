@@ -10,13 +10,18 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import type { LanguageModelV3 } from '@ai-sdk/provider';
+import type { z } from 'zod';
+import type { llmSettingSchema } from '../admin/settings-schema.ts';
 
-export interface ServerDefault {
-  kind: 'openai-compatible' | 'anthropic';
-  baseUrl?: string | undefined;
-  model: string;
-  apiKey?: string | undefined;
-}
+/**
+ * The resolved chat-provider default. Derived from the canonical `llmSettingSchema` (spec 055 FR-374)
+ * so the provider shape has ONE definition: the schema's `nullable` `baseUrl`/`apiKey` map to plain
+ * optionals here. Adding a provider `kind` is a one-line edit to the schema's `kind` enum — this type
+ * (and everything typed by it) follows automatically.
+ */
+export type ServerDefault = {
+  [K in keyof z.infer<typeof llmSettingSchema>]: Exclude<z.infer<typeof llmSettingSchema>[K], null>;
+};
 
 export type ProviderErrorCode = 'provider_unconfigured' | 'provider_error';
 

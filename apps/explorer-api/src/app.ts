@@ -34,7 +34,7 @@ import {
 import { RateLimiter } from './middleware/rate-limiter.ts';
 import { requestId } from './middleware/request-id.ts';
 import { requestLog } from './middleware/request-log.ts';
-import { requireAuth, requireScope } from './middleware/require-auth.ts';
+import { authGate, requireScope } from './middleware/require-auth.ts';
 import type { ReadBridge } from './read-bridge.ts';
 import type { ReadinessReport } from './readiness.ts';
 import { aggregateRegions } from './regions-aggregate.ts';
@@ -209,12 +209,22 @@ export function createApp(ctx: AppContext): Hono {
     }
   }
 
-  // Gated chat (spec 019): requireAuth runs before the streaming handler — anon → 401, else the
+  // The single auth composition point (spec 055 FR-375): built once from the canonical dep set and
+  // handed to every gated router + the chat route, so each receives the identical argument set (and an
+  // API key gets the same key-aware handling everywhere, including /api/auth/*).
+  const gate = authGate({
+    users: ctx.users,
+    sessionResolver: ctx.sessionResolver,
+    apiKeys: ctx.apiKeys,
+    tenants: ctx.tenants,
+  });
+
+  // Gated chat (spec 019): the auth gate runs before the streaming handler — anon → 401, else the
   // session's app user is resolved/created and the turn proceeds. The cast bridges the auth-typed
   // middleware onto the app's default env (it only gates + sets `user`, which chatHandler ignores).
   app.post(
     '/api/chat',
-    requireAuth(ctx.users, ctx.sessionResolver, ctx.apiKeys, ctx.tenants) as MiddlewareHandler,
+    gate as MiddlewareHandler,
     requireScope('chat') as MiddlewareHandler,
     ...(meterDeps ? [chatMeter(meterDeps) as MiddlewareHandler] : []),
     chatHandler({
@@ -237,25 +247,21 @@ export function createApp(ctx: AppContext): Hono {
     app.route(
       '/api/me',
       meRoutes(ctx.users, ctx.tokenUsage, {
+        gate,
         defaultTokenLimit: resolveDefaultTokenLimit,
         cacheWeight: resolveCacheWeight,
-        sessionResolver: ctx.sessionResolver,
         chatSessions: ctx.chatSessions,
         generations,
         apiKeys: ctx.apiKeys,
         apiUsage: ctx.apiUsage,
         apiQuotaWindowSec: meterConfig.quotaWindowSec,
-        tenants: ctx.tenants,
       }),
     );
   }
 
   // Backend auth endpoints (find-or-create app user + tier; logout URL). Self-service login/register
   // are Kratos flows driven by the SPA via the /kratos proxy.
-  app.route(
-    '/api/auth',
-    authRoutes(ctx.users, ctx.kratosPublicUrl ?? 'http://localhost:14433', ctx.sessionResolver),
-  );
+  app.route('/api/auth', authRoutes(ctx.kratosPublicUrl ?? 'http://localhost:14433', gate));
 
   // Organization (tenant) self-management (spec 029) — active org + member admin. Mounted only when a
   // tenants repo is wired (always in prod); super-admin org CRUD lives under /api/admin.
@@ -263,7 +269,7 @@ export function createApp(ctx: AppContext): Hono {
     app.route(
       '/api/tenant',
       tenantRoutes(ctx.users, ctx.tenants, {
-        sessionResolver: ctx.sessionResolver,
+        gate,
         apiKeys: ctx.apiKeys,
         settings: ctx.settings,
       }),
@@ -276,7 +282,7 @@ export function createApp(ctx: AppContext): Hono {
     app.route(
       '/api/admin',
       adminRoutes(ctx.users, ctx.settings, {
-        sessionResolver: ctx.sessionResolver,
+        gate,
         apiKeys: ctx.apiKeys,
         apiUsage: ctx.apiUsage,
         apiQuotaWindowSec: meterConfig.quotaWindowSec,

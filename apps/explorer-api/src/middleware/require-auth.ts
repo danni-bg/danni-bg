@@ -135,6 +135,24 @@ export function requireAuth(
   };
 }
 
+/** The one canonical dependency set the auth gate needs (spec 055 FR-375). */
+export interface AuthGateDeps {
+  users: UsersRepo;
+  sessionResolver?: SessionResolver | undefined;
+  apiKeys?: ApiKeyRepo | undefined;
+  tenants?: TenantsRepo | undefined;
+}
+
+/**
+ * Compose the `requireAuth` middleware from one canonical dep set (spec 055 FR-375). Built ONCE in
+ * `app.ts` and handed to every gated router so each receives the identical argument set — closing the
+ * `routes/auth.ts` divergence where an API key on `/api/auth/*` got a generic session 401 instead of
+ * the same key-aware handling (and 403-vs-401 semantics) every other gated route gives it.
+ */
+export function authGate(deps: AuthGateDeps): MiddlewareHandler<AuthEnv> {
+  return requireAuth(deps.users, deps.sessionResolver, deps.apiKeys, deps.tenants);
+}
+
 /** Must run after requireAuth (reads the resolved user). API keys can NEVER reach admin (spec 027). */
 export const requireAdmin: MiddlewareHandler<AuthEnv> = async (c, next) => {
   if (c.get('apiKey')) {

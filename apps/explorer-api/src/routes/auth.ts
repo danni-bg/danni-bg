@@ -5,17 +5,17 @@
 // Both sit behind requireAuth (a valid session is required).
 
 import { Hono } from 'hono';
-import type { UsersRepo } from '../../../../src/store/repos/users.ts';
-import type { SessionResolver } from '../auth/kratos-session.ts';
-import { type AuthEnv, requireAuth } from '../middleware/require-auth.ts';
+import type { MiddlewareHandler } from 'hono';
+import type { AuthEnv } from '../middleware/require-auth.ts';
 
 export function authRoutes(
-  users: UsersRepo,
   kratosPublicUrl: string,
-  resolveSession?: SessionResolver,
+  gate: MiddlewareHandler<AuthEnv>,
 ): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();
-  app.use('*', requireAuth(users, resolveSession));
+  // The shared auth gate (spec 055 FR-375) — identical to every other gated route, so an API key on
+  // /api/auth/* now gets the same key-aware handling (401/403) instead of a generic session 401.
+  app.use('*', gate);
 
   app.post('/callback', (c) => {
     const u = c.get('user');

@@ -7,6 +7,7 @@ import { ENTITY_PREDICATES } from '../../../src/enrich/relations/vocabulary.ts';
 import type { Embedder } from '../../../src/index/embedder.ts';
 import type { IndexEntry, Lang, RankedHit } from '../../../src/index/query.ts';
 import { search, searchByEntity, searchRanked } from '../../../src/index/query.ts';
+import { isStale } from '../../../src/lib/time.ts';
 import type { CuratedDatasetView } from '../../../src/read/dataset-view.ts';
 import { datasetView } from '../../../src/read/dataset-view.ts';
 import type { GridQuery } from '../../../src/read/resource-grid.ts';
@@ -206,8 +207,9 @@ export class ReadBridge {
   listLite(): DatasetLite[] {
     const db = this.deps.db;
     const slo = this.deps.freshnessSloSeconds;
+    // One timestamp for the whole batch so every row in a listLite() call is judged against the same
+    // clock (FR-373); the shared helper takes it as an explicit `now`.
     const now = Date.now();
-    const isStale = (ts: string): boolean => (now - new Date(ts).getTime()) / 1000 > slo;
 
     const rows = db
       .query<
@@ -280,7 +282,7 @@ export class ReadBridge {
           lastSyncedAt: r.last_synced_at,
           sourceLastModified: r.metadata_modified,
           sourceEtagOrHash: r.source_etag_or_hash,
-          isStale: isStale(r.last_synced_at),
+          isStale: isStale(r.last_synced_at, slo, now),
           freshnessSloSeconds: slo,
         },
         geoLinks: gm

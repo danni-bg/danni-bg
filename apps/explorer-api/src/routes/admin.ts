@@ -3,6 +3,7 @@
 // as "keep existing". The chat's default provider is resolved from these settings per request.
 
 import { Hono } from 'hono';
+import type { MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import type { PlatformSettingsRepo } from '../../../../src/store/repos/platform-settings.ts';
 import type { TenantsRepo } from '../../../../src/store/repos/tenants.ts';
@@ -19,10 +20,10 @@ import {
   togglesSchema,
 } from '../admin/settings-schema.ts';
 import { clearTenantSettings, tenantSettingsView } from '../admin/tenant-settings.ts';
-import type { SessionResolver } from '../auth/kratos-session.ts';
 import { serverDefaultFromEnv } from '../chat/providers.ts';
 import { billableTokens, effectiveLimit, quotaView } from '../chat/quota.ts';
-import { type AuthEnv, requireAdmin, requireAuth } from '../middleware/require-auth.ts';
+import { parseBody } from '../middleware/parse-body.ts';
+import { type AuthEnv, requireAdmin } from '../middleware/require-auth.ts';
 
 function maskedLlm(settings: PlatformSettingsRepo): {
   source: 'settings' | 'env';
@@ -63,7 +64,8 @@ function togglesView(settings: PlatformSettingsRepo): Record<string, unknown> {
 }
 
 export interface AdminRoutesOpts {
-  sessionResolver?: SessionResolver | undefined;
+  /** The shared auth gate (spec 055 FR-375), composed once in app.ts. */
+  gate: MiddlewareHandler<AuthEnv>;
   apiKeys?: import('../../../../src/store/repos/api-keys.ts').ApiKeyRepo | undefined;
   apiUsage?: import('../../../../src/store/repos/api-usage.ts').ApiUsageRepo | undefined;
   apiQuotaWindowSec?: (() => number) | undefined;
@@ -95,11 +97,11 @@ const adminAddMemberBody = z.object({
 export function adminRoutes(
   users: UsersRepo,
   settings: PlatformSettingsRepo,
-  opts: AdminRoutesOpts = {},
+  opts: AdminRoutesOpts,
 ): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();
-  // Pass apiKeys so a key authenticates then requireAdmin cleanly 403s it (keys are never admin).
-  app.use('*', requireAuth(users, opts.sessionResolver, opts.apiKeys, opts.tenants), requireAdmin);
+  // The shared gate authenticates (incl. API keys) then requireAdmin cleanly 403s a key (never admin).
+  app.use('*', opts.gate, requireAdmin);
 
   app.get('/settings', (c) => {
     const { source, llm } = maskedLlm(settings);
@@ -107,37 +109,23 @@ export function adminRoutes(
   });
 
   app.put('/settings', async (c) => {
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: { code: 'bad_request', message: 'invalid JSON body' } }, 400);
-    }
-    const parsed = settingsPutSchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json(
-        {
-          error: {
-            code: 'bad_request',
-            message: 'invalid settings',
-            details: parsed.error.flatten(),
-          },
-        },
-        400,
-      );
-    }
+    const parsed = await parseBody(c, settingsPutSchema, {
+      message: 'invalid settings',
+      details: 'flatten',
+    });
+    if (parsed instanceof Response) return parsed;
     const by = c.get('user').email;
-    if (parsed.data.llm) {
+    if (parsed.llm) {
       const existing = settings.get(LLM_SETTING_KEY) as LlmSetting | null;
       const merged: LlmSetting = {
-        kind: parsed.data.llm.kind,
-        model: parsed.data.llm.model,
-        baseUrl: parsed.data.llm.baseUrl ?? null,
-        apiKey: mergeSecret(parsed.data.llm.apiKey, existing?.apiKey),
+        kind: parsed.llm.kind,
+        model: parsed.llm.model,
+        baseUrl: parsed.llm.baseUrl ?? null,
+        apiKey: mergeSecret(parsed.llm.apiKey, existing?.apiKey),
       };
       settings.set(LLM_SETTING_KEY, merged, by);
     }
-    if (parsed.data.toggles) settings.set(TOGGLES_SETTING_KEY, parsed.data.toggles, by);
+    if (parsed.toggles) settings.set(TOGGLES_SETTING_KEY, parsed.toggles, by);
     const { source, llm } = maskedLlm(settings);
     return c.json({ llm, toggles: togglesView(settings), source });
   });
@@ -170,20 +158,12 @@ export function adminRoutes(
   if (apiKeys) {
     const quotaBody = z.object({ limit: z.number().int().nonnegative().nullable() });
     app.put('/api-keys/:id/quota', async (c) => {
-      let body: unknown;
-      try {
-        body = await c.req.json();
-      } catch {
-        return c.json({ error: { code: 'bad_request', message: 'invalid JSON body' } }, 400);
-      }
-      const parsed = quotaBody.safeParse(body);
-      if (!parsed.success) {
-        return c.json({ error: { code: 'bad_request', message: 'invalid quota limit' } }, 400);
-      }
-      if (!apiKeys.setQuotaLimit(c.req.param('id'), parsed.data.limit)) {
+      const parsed = await parseBody(c, quotaBody, { message: 'invalid quota limit' });
+      if (parsed instanceof Response) return parsed;
+      if (!apiKeys.setQuotaLimit(c.req.param('id'), parsed.limit)) {
         return c.json({ error: { code: 'not_found', message: 'no such key' } }, 404);
       }
-      return c.json({ ok: true, quotaLimit: parsed.data.limit });
+      return c.json({ ok: true, quotaLimit: parsed.limit });
     });
   }
 
@@ -209,23 +189,15 @@ export function adminRoutes(
       return c.json(tenantSettingsView(settings, tenant.id));
     });
     app.post('/tenants', async (c) => {
-      let body: unknown;
-      try {
-        body = await c.req.json();
-      } catch {
-        return c.json({ error: { code: 'bad_request', message: 'invalid JSON body' } }, 400);
-      }
-      const parsed = createTenantBody.safeParse(body);
-      if (!parsed.success) {
-        return c.json({ error: { code: 'bad_request', message: 'invalid org' } }, 400);
-      }
-      if (tenants.getBySlug(parsed.data.slug)) {
+      const parsed = await parseBody(c, createTenantBody, { message: 'invalid org' });
+      if (parsed instanceof Response) return parsed;
+      if (tenants.getBySlug(parsed.slug)) {
         return c.json({ error: { code: 'conflict', message: 'slug already in use' } }, 409);
       }
       const created = tenants.create({
-        name: parsed.data.name,
-        slug: parsed.data.slug,
-        ...(parsed.data.plan ? { plan: parsed.data.plan } : {}),
+        name: parsed.name,
+        slug: parsed.slug,
+        ...(parsed.plan ? { plan: parsed.plan } : {}),
       });
       return c.json(created, 201);
     });
@@ -235,21 +207,13 @@ export function adminRoutes(
     app.post('/tenants/:id/members', async (c) => {
       const tenant = tenants.get(c.req.param('id'));
       if (!tenant) return c.json({ error: { code: 'not_found', message: 'no such org' } }, 404);
-      let body: unknown;
-      try {
-        body = await c.req.json();
-      } catch {
-        return c.json({ error: { code: 'bad_request', message: 'invalid JSON body' } }, 400);
-      }
-      const parsed = adminAddMemberBody.safeParse(body);
-      if (!parsed.success) {
-        return c.json({ error: { code: 'bad_request', message: 'invalid member request' } }, 400);
-      }
-      const invitee = users.findByEmail(parsed.data.email);
+      const parsed = await parseBody(c, adminAddMemberBody, { message: 'invalid member request' });
+      if (parsed instanceof Response) return parsed;
+      const invitee = users.findByEmail(parsed.email);
       if (!invitee) {
         return c.json({ error: { code: 'not_found', message: 'no user with that email' } }, 404);
       }
-      const role = parsed.data.role ?? 'member';
+      const role = parsed.role ?? 'member';
       if (!tenants.addMember(tenant.id, invitee.id, role)) {
         return c.json(
           { error: { code: 'already_member', message: 'user is already a member of this org' } },
@@ -295,17 +259,9 @@ export function adminRoutes(
 
     const limitBody = z.object({ limit: z.number().int().nonnegative().nullable() });
     app.put('/users/:id/limit', async (c) => {
-      let body: unknown;
-      try {
-        body = await c.req.json();
-      } catch {
-        return c.json({ error: { code: 'bad_request', message: 'invalid JSON body' } }, 400);
-      }
-      const parsed = limitBody.safeParse(body);
-      if (!parsed.success) {
-        return c.json({ error: { code: 'bad_request', message: 'invalid limit' } }, 400);
-      }
-      if (!users.setTokenLimit(c.req.param('id'), parsed.data.limit)) {
+      const parsed = await parseBody(c, limitBody, { message: 'invalid limit' });
+      if (parsed instanceof Response) return parsed;
+      if (!users.setTokenLimit(c.req.param('id'), parsed.limit)) {
         return c.json({ error: { code: 'not_found', message: 'no such user' } }, 404);
       }
       return c.json({ ok: true });

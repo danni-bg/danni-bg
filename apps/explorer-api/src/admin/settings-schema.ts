@@ -1,13 +1,15 @@
-// Validation + secret helpers for the admin platform settings (spec 019). The LLM provider reuses
-// the ServerDefault shape; the API key is write-only over the wire (masked on read, kept on empty
-// write, never logged).
+// Validation + secret helpers for the admin platform settings (spec 019). `llmSettingSchema` is the
+// CANONICAL LLM-provider shape (spec 055 FR-374): the chat's `ServerDefault` type is derived from it,
+// so adding a provider `kind` is a one-line edit to the enum below. The API key is write-only over the
+// wire (masked on read, kept on empty write, never logged).
 
 import { z } from 'zod';
 
 export const LLM_SETTING_KEY = 'llm.default';
 export const TOGGLES_SETTING_KEY = 'toggles';
 
-/** Stored value for the chat's default LLM provider (the ServerDefault shape). */
+/** Canonical stored value for the chat's default LLM provider; `chat/providers.ts` `ServerDefault`
+ * derives from this (FR-374). */
 export const llmSettingSchema = z.object({
   kind: z.enum(['openai-compatible', 'anthropic']),
   model: z.string().min(1),
