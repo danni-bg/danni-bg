@@ -10,13 +10,16 @@ import { runMigrations } from '../../../src/store/migrate.ts';
 import { ApiKeyRepo } from '../../../src/store/repos/api-keys.ts';
 import { ApiUsageRepo } from '../../../src/store/repos/api-usage.ts';
 import { UsersRepo } from '../../../src/store/repos/users.ts';
+import { Metrics } from '../src/metrics.ts';
 import { chatMeter, dataApiGate } from '../src/middleware/api-metering.ts';
 import { RateLimiter } from '../src/middleware/rate-limiter.ts';
 import { requireAuth, requireScope } from '../src/middleware/require-auth.ts';
 
 const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
-function setup(over: Partial<{ rateData: number; rateChat: number; quotaData: number }> = {}) {
+function setup(
+  over: Partial<{ rateData: number; rateChat: number; quotaData: number; metrics: Metrics }> = {},
+) {
   const db = new Database(':memory:');
   runMigrations(db, join(ROOT, 'migrations'));
   const users = new UsersRepo(db);
@@ -39,6 +42,7 @@ function setup(over: Partial<{ rateData: number; rateChat: number; quotaData: nu
       quotaData: () => cfg.quotaData,
       quotaWindowSec: () => cfg.quotaWindowSec,
     },
+    ...(over.metrics ? { metrics: over.metrics } : {}),
   };
   const app = new Hono();
   app.use('/data', dataApiGate(apiKeys, deps));
@@ -151,6 +155,33 @@ describe('API metering (spec 028; principal/limit semantics spec 040)', () => {
     expect(res.status).toBe(429);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe('quota_exceeded');
     expect(res.headers.get('Retry-After')).toBe('86400');
+  });
+
+  // Spec 045 SC-3 / FR-272: a request-quota 429 increments danni_quota_rejections_total{kind="requests"}
+  // (distinct from the rate-limit counter), by exactly the rejection count.
+  it('request-quota 429 increments the quota-rejection counter, not the rate-limit counter', async () => {
+    const metrics = new Metrics();
+    s = setup({ quotaData: 1, metrics });
+    const { plaintext } = s.apiKeys.create({ userId: s.owner.id, name: 'k' });
+    expect((await s.app.request('/data', bearer(plaintext))).status).toBe(200);
+    // Two more requests are both over-quota → two quota rejections.
+    expect((await s.app.request('/data', bearer(plaintext))).status).toBe(429);
+    expect((await s.app.request('/data', bearer(plaintext))).status).toBe(429);
+    const snap = metrics.snapshot();
+    expect(snap.quotaRejections).toEqual({ requests: 2 });
+    expect(snap.rateLimitRejections).toBe(0); // a quota rejection is NOT a rate-limit rejection
+  });
+
+  // A rate-limit 429 stays on the rate-limit counter — the two signals never cross-contaminate.
+  it('rate-limit 429 increments the rate-limit counter, not the quota-rejection counter', async () => {
+    const metrics = new Metrics();
+    s = setup({ rateData: 1, metrics });
+    const { plaintext } = s.apiKeys.create({ userId: s.owner.id, name: 'k' });
+    expect((await s.app.request('/data', bearer(plaintext))).status).toBe(200);
+    expect((await s.app.request('/data', bearer(plaintext))).status).toBe(429);
+    const snap = metrics.snapshot();
+    expect(snap.rateLimitRejections).toBe(1);
+    expect(snap.quotaRejections).toEqual({});
   });
 
   // SC-3: one recording semantic on BOTH gates — counted iff admitted past the gate; a handler-level

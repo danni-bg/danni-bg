@@ -129,7 +129,9 @@ export function dataApiGate(
       const windowSec = deps.config.quotaWindowSec();
       const used = deps.usage.countSinceForKey(key.id, windowStart(windowSec, now()), 'data');
       if (used >= cap) {
-        deps.metrics?.recordRateLimitRejection('data');
+        // FR-272 (spec 045): the request-quota 429 is a QUOTA rejection, counted distinctly from the
+        // rate-limit 429 above — quota exhaustion is the churn/upsell signal, not a burst-throttle.
+        deps.metrics?.recordQuotaRejection('requests');
         // FR-223: the request-quota 429 is a correct HTTP citizen — advertise Retry-After from the
         // rolling window, matching the rate-limit 429 above.
         c.header('Retry-After', String(windowSec));
