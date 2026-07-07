@@ -38,4 +38,24 @@ describe('PlatformSettingsRepo (tenant-scoped, spec 029)', () => {
   it('a tenant with no global fallback and no own value reads null', () => {
     expect(s.settings.get('toggles', 'acme')).toBeNull();
   });
+
+  it('own() returns the tenant row only, with NO global fallback (spec 042)', () => {
+    s.settings.set('llm.default', { model: 'global' }, 'root');
+    // A tenant with no override: get() falls back to global, but own() sees nothing.
+    expect(s.settings.get('llm.default', 'acme')).toEqual({ model: 'global' });
+    expect(s.settings.own('llm.default', 'acme')).toBeNull();
+    // Once it overrides, own() returns exactly its own value.
+    s.settings.set('llm.default', { model: 'acme' }, 'owner', undefined, 'acme');
+    expect(s.settings.own('llm.default', 'acme')).toEqual({ model: 'acme' });
+  });
+
+  it('clear() removes a tenant override so it falls back to global again (spec 042)', () => {
+    s.settings.set('llm.default', { model: 'global' }, 'root');
+    s.settings.set('llm.default', { model: 'acme' }, 'owner', undefined, 'acme');
+    s.settings.clear('llm.default', 'acme');
+    expect(s.settings.own('llm.default', 'acme')).toBeNull();
+    expect(s.settings.get('llm.default', 'acme')).toEqual({ model: 'global' });
+    // Clearing the global row is unaffected by the tenant clear (rows are independent).
+    expect(s.settings.get('llm.default', GLOBAL_SETTINGS)).toEqual({ model: 'global' });
+  });
 });

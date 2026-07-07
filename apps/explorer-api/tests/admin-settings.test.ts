@@ -61,5 +61,24 @@ describe('admin settings helpers', () => {
       expect(resolveServerDefault(r, {})).toBeNull();
       db.close();
     });
+
+    // Spec 042 FR-240/245: resolution goes through the active org — a tenant override wins, others
+    // (and the default single-tenant call site) still get the global row.
+    it('resolves per-tenant: org A gets its override, org B inherits global', () => {
+      const { db, r } = repo();
+      r.set(LLM_SETTING_KEY, { kind: 'anthropic', model: 'global-model', apiKey: 'sk-global' });
+      r.set(
+        LLM_SETTING_KEY,
+        { kind: 'openai-compatible', model: 'acme-model', apiKey: 'sk-acme' },
+        'owner',
+        undefined,
+        'acme',
+      );
+      expect(resolveServerDefault(r, {}, 'acme')?.model).toBe('acme-model');
+      expect(resolveServerDefault(r, {}, 'globex')?.model).toBe('global-model');
+      // No tenant argument (single-tenant / non-chat call sites) still resolves the global row (FR-245).
+      expect(resolveServerDefault(r, {})?.model).toBe('global-model');
+      db.close();
+    });
   });
 });

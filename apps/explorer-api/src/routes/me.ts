@@ -51,7 +51,9 @@ const avatarBody = z.object({
 });
 
 export interface MeRoutesOpts {
-  defaultTokenLimit: () => number | undefined;
+  // Resolved through the caller's active org (spec 042 FR-240): a per-tenant `defaultTokenLimit`
+  // override applies to the user's own quota view, matching the chat gate's enforcement.
+  defaultTokenLimit: (tenantId?: string) => number | undefined;
   cacheWeight: () => number | undefined;
   sessionResolver?: SessionResolver | undefined;
   chatSessions?: PersistentSessionStore | undefined;
@@ -120,7 +122,7 @@ export function meRoutes(
   app.get('/usage', allowAnyKey, (c) => {
     const user = c.get('user');
     const u = tokenUsage.usageForUser(user.id, user.usage_reset_at);
-    const limit = effectiveLimit(user.token_limit, opts.defaultTokenLimit());
+    const limit = effectiveLimit(user.token_limit, opts.defaultTokenLimit(c.get('tenant').id));
     // `used` is the billable total (cache hits discounted); the breakdown stays raw.
     return c.json({
       ...quotaView(billableTokens(u.used, u.cached, opts.cacheWeight()), limit),

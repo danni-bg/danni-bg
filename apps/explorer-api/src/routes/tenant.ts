@@ -4,8 +4,14 @@
 
 import { Hono } from 'hono';
 import { z } from 'zod';
+import type { PlatformSettingsRepo } from '../../../../src/store/repos/platform-settings.ts';
 import type { TenantRole, TenantsRepo } from '../../../../src/store/repos/tenants.ts';
 import type { UsersRepo } from '../../../../src/store/repos/users.ts';
+import {
+  applyTenantSettings,
+  tenantSettingsPutSchema,
+  tenantSettingsView,
+} from '../admin/tenant-settings.ts';
 import type { SessionResolver } from '../auth/kratos-session.ts';
 import {
   type AuthEnv,
@@ -24,6 +30,8 @@ const switchBody = z.object({ tenantId: z.string().min(1) });
 export interface TenantRoutesOpts {
   sessionResolver?: SessionResolver | undefined;
   apiKeys?: import('../../../../src/store/repos/api-keys.ts').ApiKeyRepo | undefined;
+  /** Platform settings repo — backs the org-admin per-tenant settings surface (spec 042 FR-242). */
+  settings?: PlatformSettingsRepo | undefined;
 }
 
 export function tenantRoutes(
@@ -89,6 +97,42 @@ export function tenantRoutes(
     app.get('/api-keys', requireTenantAdmin, (c) =>
       c.json({ keys: apiKeys.listForTenant(c.get('tenant').id) }),
     );
+  }
+
+  // Per-tenant runtime settings (spec 042 FR-242): org admins view/set/clear ONLY their org's
+  // overridable keys (the LLM provider + `defaultTokenLimit`), scoped to the active org. The view is
+  // masked and isolation-safe — it never returns the global (or another tenant's) secret, and an
+  // inherited LLM config exposes no key hint (FR-243). Only wired when a settings repo is present.
+  const settings = opts.settings;
+  if (settings) {
+    app.get('/settings', requireTenantAdmin, (c) =>
+      c.json(tenantSettingsView(settings, c.get('tenant').id)),
+    );
+    app.put('/settings', requireTenantAdmin, async (c) => {
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: { code: 'bad_request', message: 'invalid JSON body' } }, 400);
+      }
+      // `.strict()` rejects any non-allowlisted field (a platform toggle / api rate-quota knob) with a
+      // 400 that writes nothing (FR-241 / SC-3).
+      const parsed = tenantSettingsPutSchema.safeParse(body);
+      if (!parsed.success) {
+        return c.json(
+          {
+            error: {
+              code: 'bad_request',
+              message: 'invalid settings',
+              details: parsed.error.flatten(),
+            },
+          },
+          400,
+        );
+      }
+      applyTenantSettings(settings, c.get('tenant').id, parsed.data, c.get('user').email);
+      return c.json(tenantSettingsView(settings, c.get('tenant').id));
+    });
   }
 
   // Add an EXISTING user (by email) to the active org. Org admins may add member/admin; only owners

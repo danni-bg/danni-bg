@@ -18,6 +18,7 @@ import {
   settingsPutSchema,
   togglesSchema,
 } from '../admin/settings-schema.ts';
+import { clearTenantSettings, tenantSettingsView } from '../admin/tenant-settings.ts';
 import type { SessionResolver } from '../auth/kratos-session.ts';
 import { serverDefaultFromEnv } from '../chat/providers.ts';
 import { billableTokens, effectiveLimit, quotaView } from '../chat/quota.ts';
@@ -167,6 +168,21 @@ export function adminRoutes(
   // still enforced on removal so a seeded org can never be left ownerless from this surface.
   if (tenants) {
     app.get('/tenants', (c) => c.json({ tenants: tenants.listAll() }));
+
+    // Super-admin view/recovery of any org's overrides (spec 042 FR-244): inspect a tenant's
+    // effective (masked) settings and clear all of its overrides so a misconfigured org falls back to
+    // global without SQL. The view reuses the tenant-facing, isolation-safe masking (never a secret).
+    app.get('/tenants/:id/settings', (c) => {
+      const tenant = tenants.get(c.req.param('id'));
+      if (!tenant) return c.json({ error: { code: 'not_found', message: 'no such org' } }, 404);
+      return c.json(tenantSettingsView(settings, tenant.id));
+    });
+    app.delete('/tenants/:id/settings', (c) => {
+      const tenant = tenants.get(c.req.param('id'));
+      if (!tenant) return c.json({ error: { code: 'not_found', message: 'no such org' } }, 404);
+      clearTenantSettings(settings, tenant.id);
+      return c.json(tenantSettingsView(settings, tenant.id));
+    });
     app.post('/tenants', async (c) => {
       let body: unknown;
       try {

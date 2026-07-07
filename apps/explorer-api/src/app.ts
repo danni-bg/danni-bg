@@ -143,19 +143,24 @@ export function createApp(ctx: AppContext): Hono {
   // In-flight generations run here (detached from the request) so reload/disconnect can re-attach.
   const generations = ctx.generations ?? new GenerationManager();
   // The chat's default provider is resolved PER REQUEST so an admin's settings edit takes effect
-  // without a restart: settings store wins, else the env seed (spec 019). Falls back to the configured
-  // ChatConfig.serverDefault when no settings repo is wired (e.g. focused unit tests).
-  const resolveDefault = () =>
-    ctx.settings ? resolveServerDefault(ctx.settings, process.env) : chat.serverDefault;
+  // without a restart: settings store wins, else the env seed (spec 019). Resolved through the
+  // caller's ACTIVE org (spec 042 FR-240) — the tenant's override wins, `global` is the fallback.
+  // Falls back to the configured ChatConfig.serverDefault when no settings repo is wired (e.g. focused
+  // unit tests); an absent tenantId resolves the global row (single-tenant / non-chat call sites).
+  const resolveDefault = (tenantId?: string) =>
+    ctx.settings ? resolveServerDefault(ctx.settings, process.env, tenantId) : chat.serverDefault;
 
-  // The platform default token quota (0/undefined = unlimited) + the cache-hit weight, resolved per
-  // request from settings so an admin edit applies without a restart.
-  const resolveToggles = () => {
+  // Platform toggles resolved from settings per request so an admin edit applies without a restart.
+  // A `tenantId` resolves the toggles blob through the active org (tenant override → global fallback).
+  // Only `defaultTokenLimit` is tenant-overridable (spec 042 FR-241); the cache weight, max output,
+  // and api rate/quota knobs stay deployment-global and are read WITHOUT a tenant.
+  const resolveToggles = (tenantId?: string) => {
     if (!ctx.settings) return undefined;
-    const raw = ctx.settings.get(TOGGLES_SETTING_KEY);
+    const raw = ctx.settings.get(TOGGLES_SETTING_KEY, tenantId);
     return raw != null ? togglesSchema.parse(raw) : undefined;
   };
-  const resolveDefaultTokenLimit = (): number | undefined => resolveToggles()?.defaultTokenLimit;
+  const resolveDefaultTokenLimit = (tenantId?: string): number | undefined =>
+    resolveToggles(tenantId)?.defaultTokenLimit;
   const resolveCacheWeight = (): number | undefined => resolveToggles()?.cachedTokenWeight;
   const resolveMaxOutputTokens = (): number | undefined => resolveToggles()?.maxOutputTokens;
 
@@ -211,7 +216,8 @@ export function createApp(ctx: AppContext): Hono {
       // Persistent store when wired (conversations survive + resume), else the in-memory one.
       sessions: ctx.chatSessions ?? chat.sessions,
       generations,
-      selectModel: chat.selectModel ?? (() => selectModel(resolveDefault())),
+      selectModel:
+        chat.selectModel ?? ((tenantId?: string) => selectModel(resolveDefault(tenantId))),
       ...(ctx.tokenUsage ? { usage: ctx.tokenUsage } : {}),
       defaultTokenLimit: resolveDefaultTokenLimit,
       cacheWeight: resolveCacheWeight,
@@ -253,6 +259,7 @@ export function createApp(ctx: AppContext): Hono {
       tenantRoutes(ctx.users, ctx.tenants, {
         sessionResolver: ctx.sessionResolver,
         apiKeys: ctx.apiKeys,
+        settings: ctx.settings,
       }),
     );
   }

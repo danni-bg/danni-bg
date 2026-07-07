@@ -330,7 +330,7 @@ describe('POST /api/chat', () => {
     expect(connections).toBe(0);
   });
 
-  it('resolves the model from server config only — no request-derived arguments reach the seam (FR-171, SC-2)', async () => {
+  it('resolves the model from server config only — only the server-resolved active org reaches the seam (FR-171, SC-2)', async () => {
     const model = mockModel([textStep('ok')]);
     const seamCalls: unknown[][] = [];
     const ctx: AppContext = {
@@ -350,7 +350,10 @@ describe('POST /api/chat', () => {
     const res = await post(createApp(ctx), { message: 'q' });
     expect(res.status).toBe(200);
     await res.text();
-    expect(seamCalls).toEqual([[]]);
+    // The seam receives ONLY the server-resolved active-org id (spec 042 FR-240: it selects WHICH
+    // stored provider config to use — the default org here, no tenants repo wired). No request body
+    // content (message/scope/provider) reaches it, so the spec-035 SSRF lockdown still holds.
+    expect(seamCalls).toEqual([['default']]);
   });
 
   it('emits provider_unconfigured via the REAL seam when no server provider exists, with no fabricated content (FR-173)', async () => {
