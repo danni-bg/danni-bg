@@ -27,7 +27,11 @@ export function requestLog(
     const durationMs = Math.max(0, now() - start);
     const status = c.res.status;
     const route = routeClassOf(c.req.path);
-    metrics?.recordRequest(route, status, durationMs);
+    // Attribute the request to the caller's active org (spec 029/045 FR-271) — set by requireAuth,
+    // which has run by the time `next()` returns. Anonymous/unauthenticated traffic has no tenant and
+    // folds into the `default` series inside the registry.
+    const tenant = (c.get('tenant') as { id: string } | undefined)?.id;
+    metrics?.recordRequest(route, status, durationMs, tenant);
     const requestId = c.get('requestId') as string | undefined;
     const fields = {
       method: c.req.method,

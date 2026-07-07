@@ -110,6 +110,9 @@ export function chatHandler(deps: ChatRouteDeps) {
           const secs = Math.max(1, Math.ceil((Date.parse(resetsAt) - Date.now()) / 1000));
           c.header('Retry-After', String(secs));
         }
+        // Count the token-quota exhaustion distinctly from rate limits (spec 045 FR-272) — the
+        // churn/upsell signal. Emitted here, the spec-021/039 chat token-quota rejection point.
+        deps.metrics?.recordQuotaRejection('tokens');
         return c.json(
           {
             error: {
@@ -268,6 +271,7 @@ export function chatHandler(deps: ChatRouteDeps) {
           deps.metrics?.recordLlm(
             result.usage,
             estimateCost(result.usage, pricingFor(modelId), deps.cacheWeight?.() ?? 0.1),
+            tenantId,
           );
         }
         turnSpan.end({
