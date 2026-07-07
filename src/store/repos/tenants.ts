@@ -17,6 +17,11 @@ export interface TenantRow {
   id: string;
   name: string;
   slug: string;
+  /**
+   * Free-text plan label. DEFERRED (spec 040 FR-224): it is stored + echoed but maps to NO runtime
+   * limit — no rate, request-quota, or token limit reads it. A future pricing/plans spec will resolve
+   * default rate/quota/token limits from `plan`; until then, do not mistake this field for enforcement.
+   */
   plan: string;
   created_at: string;
 }

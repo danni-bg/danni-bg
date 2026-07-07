@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { Crosswalk } from '../../../packages/geo-boundaries/src/crosswalk.ts';
 import { loadCrosswalk } from '../../../packages/geo-boundaries/src/load.ts';
 import { runMigrations } from '../../../src/store/migrate.ts';
+import { ApiKeyRepo } from '../../../src/store/repos/api-keys.ts';
+import { ApiUsageRepo } from '../../../src/store/repos/api-usage.ts';
 import { PlatformSettingsRepo } from '../../../src/store/repos/platform-settings.ts';
 import { UsersRepo } from '../../../src/store/repos/users.ts';
 import { type AppContext, createApp } from '../src/app.ts';
@@ -101,5 +103,74 @@ describe('GET/PUT /api/admin/settings', () => {
 
   it('PUT rejects an invalid body with 400', async () => {
     expect((await put(ADMIN, { llm: { kind: 'bogus', model: 'm' } })).status).toBe(400);
+  });
+});
+
+// Super-admin per-key request-quota override (spec 040 FR-221 / SC-2): settable + clearable via the
+// API, no SQL. Wires an ApiKeyRepo so the route is mounted.
+describe('PUT /api/admin/api-keys/:id/quota', () => {
+  function setupKeys() {
+    const db = new Database(':memory:');
+    runMigrations(db, join(ROOT, 'migrations'));
+    const users = new UsersRepo(db);
+    const settings = new PlatformSettingsRepo(db);
+    const apiKeys = new ApiKeyRepo(db);
+    const apiUsage = new ApiUsageRepo(db);
+    const ctx: AppContext = {
+      bridge: {} as ReadBridge,
+      crosswalk: new Crosswalk(loadCrosswalk()),
+      health: () => ({ lastSyncedAt: null, isStale: true, defaultProvider: 'absent' }),
+      users,
+      settings,
+      apiKeys,
+      apiUsage,
+    };
+    return { db, users, apiKeys, app: createApp(ctx) };
+  }
+
+  let s: ReturnType<typeof setupKeys>;
+  let ownerId: string;
+  beforeEach(() => {
+    s = setupKeys();
+    s.users.findOrCreateByKratosId({ kratosIdentityId: 'admin-k', email: 'admin@example.com' });
+    s.users.setRoleByEmail('admin@example.com', 'admin');
+    ownerId = s.users.findOrCreateByKratosId({
+      kratosIdentityId: 'user-k',
+      email: 'user@example.com',
+    }).id;
+  });
+  afterEach(() => s.db.close());
+
+  const putQuota = (h: Record<string, string>, id: string, body: unknown) =>
+    s.app.request(`/api/admin/api-keys/${id}/quota`, {
+      method: 'PUT',
+      headers: h,
+      body: JSON.stringify(body),
+    });
+
+  it('a super-admin sets, changes, and clears a key quota (no SQL)', async () => {
+    const { view } = s.apiKeys.create({ userId: ownerId, name: 'k' });
+
+    expect((await putQuota(ADMIN, view.id, { limit: 500 })).status).toBe(200);
+    expect(s.apiKeys.listForUser(ownerId)[0]?.quotaLimit).toBe(500);
+    expect((await putQuota(ADMIN, view.id, { limit: 10 })).status).toBe(200);
+    expect(s.apiKeys.listForUser(ownerId)[0]?.quotaLimit).toBe(10);
+    expect((await putQuota(ADMIN, view.id, { limit: null })).status).toBe(200);
+    expect(s.apiKeys.listForUser(ownerId)[0]?.quotaLimit).toBeNull();
+  });
+
+  it('404 for an unknown key, 400 for an invalid limit', async () => {
+    expect((await putQuota(ADMIN, 'no-such', { limit: 5 })).status).toBe(404);
+    const { view } = s.apiKeys.create({ userId: ownerId, name: 'k' });
+    expect((await putQuota(ADMIN, view.id, { limit: -1 })).status).toBe(400);
+    expect((await putQuota(ADMIN, view.id, {})).status).toBe(400);
+  });
+
+  it('a non-admin (and an anonymous caller) cannot set a key quota', async () => {
+    const { view } = s.apiKeys.create({ userId: ownerId, name: 'k' });
+    expect((await putQuota(USER, view.id, { limit: 5 })).status).toBe(403);
+    expect(
+      (await putQuota({ 'content-type': 'application/json' }, view.id, { limit: 5 })).status,
+    ).toBe(401);
   });
 });

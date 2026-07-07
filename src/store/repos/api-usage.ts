@@ -43,7 +43,7 @@ export class ApiUsageRepo {
       );
   }
 
-  /** Requests by a principal since `sinceIso` (optionally one route class) — backs the request quota. */
+  /** Requests by a principal since `sinceIso` (optionally one route class) — user-level rollup view. */
   countSince(principalId: string, sinceIso: string, routeClass?: RouteClass): number {
     const row = routeClass
       ? this.db
@@ -56,6 +56,27 @@ export class ApiUsageRepo {
             'SELECT COUNT(*) AS n FROM api_usage WHERE principal_id = ? AND created_at >= ?',
           )
           .get(principalId, sinceIso);
+    return row?.n ?? 0;
+  }
+
+  /**
+   * Requests attributed to a single API key since `sinceIso` (optionally one route class) — backs the
+   * per-key request quota (spec 040 FR-220). The quota attribution unit is the key, so this filters by
+   * `key_id`, matching the per-key `quota_limit` the gate caps against: a key is throttled by its own
+   * traffic only, never its owner's other keys.
+   */
+  countSinceForKey(keyId: string, sinceIso: string, routeClass?: RouteClass): number {
+    const row = routeClass
+      ? this.db
+          .query<{ n: number }, [string, string, string]>(
+            'SELECT COUNT(*) AS n FROM api_usage WHERE key_id = ? AND created_at >= ? AND route_class = ?',
+          )
+          .get(keyId, sinceIso, routeClass)
+      : this.db
+          .query<{ n: number }, [string, string]>(
+            'SELECT COUNT(*) AS n FROM api_usage WHERE key_id = ? AND created_at >= ?',
+          )
+          .get(keyId, sinceIso);
     return row?.n ?? 0;
   }
 

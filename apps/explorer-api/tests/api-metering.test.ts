@@ -43,6 +43,10 @@ function setup(over: Partial<{ rateData: number; rateChat: number; quotaData: nu
   const app = new Hono();
   app.use('/data', dataApiGate(apiKeys, deps));
   app.get('/data', (c) => c.json({ ok: true }));
+  // A gated route whose HANDLER rejects with 400 — for the record-vs-gate semantic (spec 040 FR-222):
+  // the request was admitted past the gate, so it must still be counted despite the handler's 400.
+  app.use('/data-reject', dataApiGate(apiKeys, deps));
+  app.get('/data-reject', (c) => c.json({ error: { code: 'bad_request' } }, 400));
   app.use(
     '/chat',
     requireAuth(users, undefined, apiKeys) as MiddlewareHandler,
@@ -50,12 +54,19 @@ function setup(over: Partial<{ rateData: number; rateChat: number; quotaData: nu
     chatMeter(deps) as MiddlewareHandler,
   );
   app.get('/chat', (c) => c.json({ ok: true }));
+  app.use(
+    '/chat-reject',
+    requireAuth(users, undefined, apiKeys) as MiddlewareHandler,
+    requireScope('chat') as MiddlewareHandler,
+    chatMeter(deps) as MiddlewareHandler,
+  );
+  app.get('/chat-reject', (c) => c.json({ error: { code: 'bad_request' } }, 400));
   return { db, users, apiKeys, apiUsage, owner, app };
 }
 
 const bearer = (key: string) => ({ headers: { authorization: `Bearer ${key}` } });
 
-describe('API metering (spec 028)', () => {
+describe('API metering (spec 028; principal/limit semantics spec 040)', () => {
   let s: ReturnType<typeof setup>;
   afterEach(() => s.db.close());
 
@@ -89,12 +100,76 @@ describe('API metering (spec 028)', () => {
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe('quota_exceeded');
   });
 
-  it('a per-key quota override beats the plan default', async () => {
+  it('a per-key quota override (set via the repo path) beats the plan default', async () => {
     s = setup({ quotaData: 1000 });
     const { plaintext, view } = s.apiKeys.create({ userId: s.owner.id, name: 'k' });
-    s.db.query('UPDATE api_keys SET quota_limit = 1 WHERE id = ?').run(view.id);
+    expect(s.apiKeys.setQuotaLimit(view.id, 1)).toBe(true); // spec 040 FR-221: settable, no SQL
     expect((await s.app.request('/data', bearer(plaintext))).status).toBe(200);
     expect((await s.app.request('/data', bearer(plaintext))).status).toBe(429);
+    // FR-221: the override is visible wherever the key is listed.
+    expect(s.apiKeys.listForUser(s.owner.id).find((k) => k.id === view.id)?.quotaLimit).toBe(1);
+    // FR-221: clearing it (null) falls the key back to the plan default (SC-2).
+    expect(s.apiKeys.setQuotaLimit(view.id, null)).toBe(true);
+    expect((await s.app.request('/data', bearer(plaintext))).status).toBe(200);
+  });
+
+  // SC-1: two keys of ONE user meter independently. The quota/rate principal is the KEY (FR-220), so
+  // exhausting key A must not throttle key B, and key B's cap counts only key B's own requests.
+  it('two keys of one user meter independently (per-key quota principal)', async () => {
+    s = setup({ quotaData: 1000 });
+    const a = s.apiKeys.create({ userId: s.owner.id, name: 'A' });
+    const b = s.apiKeys.create({ userId: s.owner.id, name: 'B' });
+    s.apiKeys.setQuotaLimit(a.view.id, 1);
+    s.apiKeys.setQuotaLimit(b.view.id, 1);
+    // Exhaust key A.
+    expect((await s.app.request('/data', bearer(a.plaintext))).status).toBe(200);
+    expect((await s.app.request('/data', bearer(a.plaintext))).status).toBe(429);
+    // Key B is unaffected — its cap sees only B's (zero) prior requests.
+    expect((await s.app.request('/data', bearer(b.plaintext))).status).toBe(200);
+    expect((await s.app.request('/data', bearer(b.plaintext))).status).toBe(429);
+    // Each key's own usage was counted, not the owner's aggregate.
+    expect(s.apiUsage.countSinceForKey(a.view.id, '2000-01-01T00:00:00.000Z', 'data')).toBe(1);
+    expect(s.apiUsage.countSinceForKey(b.view.id, '2000-01-01T00:00:00.000Z', 'data')).toBe(1);
+  });
+
+  // SC-1 (rate): the rate bucket is keyed by the KEY, so a rate-exhausted key A doesn't throttle key B.
+  it('the rate bucket is keyed by the API key, not the owner', async () => {
+    s = setup({ rateData: 1 });
+    const a = s.apiKeys.create({ userId: s.owner.id, name: 'A' });
+    const b = s.apiKeys.create({ userId: s.owner.id, name: 'B' });
+    expect((await s.app.request('/data', bearer(a.plaintext))).status).toBe(200);
+    expect((await s.app.request('/data', bearer(a.plaintext))).status).toBe(429); // A rate-limited
+    expect((await s.app.request('/data', bearer(b.plaintext))).status).toBe(200); // B unaffected
+  });
+
+  // SC-4: the request-quota 429 carries a Retry-After consistent with the configured window (FR-223).
+  it('the request-quota 429 sets Retry-After from the window', async () => {
+    s = setup({ quotaData: 1 });
+    const { plaintext } = s.apiKeys.create({ userId: s.owner.id, name: 'k' });
+    expect((await s.app.request('/data', bearer(plaintext))).status).toBe(200);
+    const res = await s.app.request('/data', bearer(plaintext));
+    expect(res.status).toBe(429);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('quota_exceeded');
+    expect(res.headers.get('Retry-After')).toBe('86400');
+  });
+
+  // SC-3: one recording semantic on BOTH gates — counted iff admitted past the gate; a handler-level
+  // 400 still counts, but a gate-level rejection (scope/rate/quota) does not (FR-222).
+  it('records iff admitted past the gate — handler 400 counts, gate rejection does not', async () => {
+    s = setup();
+    const since = '2000-01-01T00:00:00.000Z';
+    const key = s.apiKeys.create({ userId: s.owner.id, name: 'k' });
+
+    // Admitted past both gates, then rejected by the handler with 400 → still counted, on both routes.
+    expect((await s.app.request('/data-reject', bearer(key.plaintext))).status).toBe(400);
+    expect((await s.app.request('/chat-reject', bearer(key.plaintext))).status).toBe(400);
+    expect(s.apiUsage.countSince(s.owner.id, since, 'data')).toBe(1);
+    expect(s.apiUsage.countSince(s.owner.id, since, 'chat')).toBe(1);
+
+    // Rejected AT the gate (missing read scope) → not counted.
+    const chatOnly = s.apiKeys.create({ userId: s.owner.id, name: 'c', scopes: ['chat'] });
+    expect((await s.app.request('/data', bearer(chatOnly.plaintext))).status).toBe(403);
+    expect(s.apiUsage.countSince(s.owner.id, since, 'data')).toBe(1); // unchanged
   });
 
   it('rejects a revoked key and a key without read scope on the data API', async () => {
