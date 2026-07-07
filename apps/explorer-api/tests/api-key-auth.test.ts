@@ -3,7 +3,7 @@
 // (human-only) routes.
 
 import { Database } from 'bun:sqlite';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Hono } from 'hono';
@@ -17,6 +17,15 @@ import {
   requireHuman,
   requireScope,
 } from '../src/middleware/require-auth.ts';
+
+// This suite drives gated routes via X-User-* headers, which requires the explicit trust opt-in
+// (spec 034 FR-164; hermetic — no live Kratos, Constitution VI).
+beforeAll(() => {
+  process.env.TRUST_PROXY_AUTH_HEADERS = 'true';
+});
+afterAll(() => {
+  delete process.env.TRUST_PROXY_AUTH_HEADERS;
+});
 
 const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 

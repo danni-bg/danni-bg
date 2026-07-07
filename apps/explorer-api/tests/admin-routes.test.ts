@@ -1,7 +1,7 @@
 // Admin settings API (spec 019, Phase C) — hermetic via createApp + injected identity headers.
 
 import { Database } from 'bun:sqlite';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Crosswalk } from '../../../packages/geo-boundaries/src/crosswalk.ts';
@@ -11,6 +11,15 @@ import { PlatformSettingsRepo } from '../../../src/store/repos/platform-settings
 import { UsersRepo } from '../../../src/store/repos/users.ts';
 import { type AppContext, createApp } from '../src/app.ts';
 import type { ReadBridge } from '../src/read-bridge.ts';
+
+// This suite drives gated routes via X-User-* headers, which requires the explicit trust opt-in
+// (spec 034 FR-164; hermetic — no live Kratos, Constitution VI).
+beforeAll(() => {
+  process.env.TRUST_PROXY_AUTH_HEADERS = 'true';
+});
+afterAll(() => {
+  delete process.env.TRUST_PROXY_AUTH_HEADERS;
+});
 
 const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 

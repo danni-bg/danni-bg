@@ -94,7 +94,8 @@ export function main(): void {
     settings,
     kratosPublicUrl: kratosUrl,
     // Single-port mode: validate the Kratos session ourselves so the app works without Oathkeeper
-    // in front (Oathkeeper's X-User-* headers still take precedence when present).
+    // in front. Inbound X-User-* headers are IGNORED unless the operator opts in with
+    // TRUST_PROXY_AUTH_HEADERS (spec 034) — anyone can set them on a directly-exposed port.
     sessionResolver: kratosSessionResolver(kratosUrl),
   };
   const app = createApp(ctx);
