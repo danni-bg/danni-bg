@@ -161,6 +161,16 @@ export function requireScope(scope: ApiKeyScope): MiddlewareHandler<AuthEnv> {
   };
 }
 
+/**
+ * Run after requireAuth: the explicit "any-key" access class (spec 038) — a valid session OR any
+ * valid key may pass, no scope required. A documented pass-through so self-introspection routes
+ * (usage/quota) declare their class rather than sit behind bare requireAuth by accident (FR-200).
+ */
+export const allowAnyKey: MiddlewareHandler<AuthEnv> = async (_c, next) => {
+  await next();
+  return undefined;
+};
+
 /** Run after requireAuth: reject API-key callers (human-only routes, e.g. managing keys themselves). */
 export const requireHuman: MiddlewareHandler<AuthEnv> = async (c, next) => {
   if (c.get('apiKey')) {
