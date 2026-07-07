@@ -12,6 +12,7 @@ import type {
   ManifestResourceEntry,
   ManifestTotals,
 } from '../manifest/writer.ts';
+import { withTransaction } from '../store/db.ts';
 import { CrawlCheckpointsRepo } from '../store/repos/crawl-checkpoints.ts';
 import { DatasetsRepo } from '../store/repos/datasets.ts';
 import { OrganizationsRepo } from '../store/repos/organizations.ts';
@@ -279,13 +280,18 @@ export async function runEgovSync(opts: EgovSyncOptions): Promise<EgovSyncResult
         rawBody = await opts.client.getResourceData(r.uri);
       } catch (err) {
         log.warn('egov.capture.fail', { resource: r.uri, error: msg(err) });
-        resourcesRepo.upsert({ ...baseResource, declaredFormat: formatHint });
-        resourcesRepo.recordOutcome(r.uri, 'failure', msg(err));
-        checkpoint.markResourceFailed({
-          scopeHash: opts.scopeHash,
-          datasetUri: uri,
-          resourceUri: r.uri,
-          reason: msg(err),
+        // A recorded failure is also one logical unit across the same three tables — wrap it too so
+        // the resource row, its failure outcome, and the checkpoint failure mark are all-or-nothing
+        // (spec 052 FR-340).
+        withTransaction(opts.db, () => {
+          resourcesRepo.upsert({ ...baseResource, declaredFormat: formatHint });
+          resourcesRepo.recordOutcome(r.uri, 'failure', msg(err));
+          checkpoint.markResourceFailed({
+            scopeHash: opts.scopeHash,
+            datasetUri: uri,
+            resourceUri: r.uri,
+            reason: msg(err),
+          });
         });
         totals.failed += 1;
         datasetHadFailure = true;
@@ -318,21 +324,28 @@ export async function runEgovSync(opts: EgovSyncOptions): Promise<EgovSyncResult
       if (!onDiskMatches) {
         atomicWriteFile(absPath, rawBody);
       }
-      resourcesRepo.upsert({ ...baseResource, declaredFormat: EGOV_DATASTORE_FORMAT });
-      resourcesRepo.recordCapture({
-        id: r.uri,
-        bytes: buf.byteLength,
-        sha256,
-        rawPath,
-        detectedFormat: EGOV_DATASTORE_FORMAT,
-        outcome: 'success',
-      });
-      checkpoint.markResourceSuccess({
-        scopeHash: opts.scopeHash,
-        datasetUri: uri,
-        resourceUri: r.uri,
-        sha256,
-        validator,
+      // One captured resource = one logical unit across three tables: the resource row, its capture
+      // record, and the checkpoint success. Persist them in a SINGLE transaction (spec 052 FR-340)
+      // so a crash can't leave a capture the checkpoint will re-fetch, or an upserted resource with
+      // no capture row. The raw bytes are already durably on disk (atomicWriteFile above); the
+      // non-DB event/totals bookkeeping stays outside the transaction.
+      withTransaction(opts.db, () => {
+        resourcesRepo.upsert({ ...baseResource, declaredFormat: EGOV_DATASTORE_FORMAT });
+        resourcesRepo.recordCapture({
+          id: r.uri,
+          bytes: buf.byteLength,
+          sha256,
+          rawPath,
+          detectedFormat: EGOV_DATASTORE_FORMAT,
+          outcome: 'success',
+        });
+        checkpoint.markResourceSuccess({
+          scopeHash: opts.scopeHash,
+          datasetUri: uri,
+          resourceUri: r.uri,
+          sha256,
+          validator,
+        });
       });
       totals.captured += 1;
       datasetOutcome = 'captured';

@@ -568,6 +568,33 @@ describe('crawler.egov-sync', () => {
     db.close();
   });
 
+  it('rolls back the resource triple when the checkpoint write faults mid-unit (spec 052 FR-345/SC-1)', async () => {
+    const storeRoot = globalThis.__TEST_TMP_DIR__;
+    const db = freshDb(storeRoot);
+    // Fault-inject a crash between the capture write and the checkpoint write inside the per-resource
+    // success transaction. Because the three writes (resource upsert + recordCapture + markResourceSuccess)
+    // now run in ONE transaction, the whole unit MUST roll back — no orphan resource/capture row and no
+    // checkpoint success mark disagreeing with it.
+    const orig = CrawlCheckpointsRepo.prototype.markResourceSuccess;
+    CrawlCheckpointsRepo.prototype.markResourceSuccess = () => {
+      throw new Error('fault after capture write');
+    };
+    try {
+      await expect(capture(storeRoot, db)).rejects.toThrow('fault after capture write');
+    } finally {
+      CrawlCheckpointsRepo.prototype.markResourceSuccess = orig;
+    }
+    // The aborted resource left NO row (rolled back with the checkpoint mark it never reached).
+    expect(new ResourcesRepo(db).listByDataset(DATASET_URI).length).toBe(0);
+
+    // A resumed sync (fault cleared) re-captures cleanly — the checkpoint never recorded success, so
+    // the resources are re-fetched and persisted; no resources/checkpoint disagreement survives.
+    const result = await capture(storeRoot, db);
+    expect(result.totals.captured).toBe(3);
+    expect(new ResourcesRepo(db).listByDataset(DATASET_URI).length).toBe(3);
+    db.close();
+  });
+
   it('a datastore-curation fix re-runs from the verbatim raw alone — no re-crawl (FR-314)', async () => {
     const storeRoot = globalThis.__TEST_TMP_DIR__;
     const db = freshDb(storeRoot);

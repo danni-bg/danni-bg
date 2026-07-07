@@ -65,7 +65,7 @@ describe('enrich.link-datasets', () => {
 
   it('creates pairwise links for an entity attached to multiple datasets', () => {
     const r = linkDatasetsForEntity(
-      { entitiesRepo: s.entitiesRepo, linksRepo: s.linksRepo },
+      { db: s.db, entitiesRepo: s.entitiesRepo, linksRepo: s.linksRepo },
       'geo:bg-municipality-sofia',
     );
     expect(r.created).toBe(3); // (d1,d2), (d1,d3), (d2,d3)
@@ -79,19 +79,56 @@ describe('enrich.link-datasets', () => {
 
   it('returns 0 for unknown entity', () => {
     const r = linkDatasetsForEntity(
-      { entitiesRepo: s.entitiesRepo, linksRepo: s.linksRepo },
+      { db: s.db, entitiesRepo: s.entitiesRepo, linksRepo: s.linksRepo },
       'missing',
     );
     expect(r.created).toBe(0);
   });
 
   it('linkAllSharedEntities aggregates across entities', () => {
-    const r = linkAllSharedEntities({ entitiesRepo: s.entitiesRepo, linksRepo: s.linksRepo }, [
-      'geo:bg-municipality-sofia',
-      'missing',
-    ]);
+    const r = linkAllSharedEntities(
+      { db: s.db, entitiesRepo: s.entitiesRepo, linksRepo: s.linksRepo },
+      ['geo:bg-municipality-sofia', 'missing'],
+    );
     expect(r.created).toBe(3);
     expect(r.skippedHubs).toBe(0);
+  });
+
+  it('writes one entity’s links atomically — a fault mid-batch rolls back the whole batch (spec 052 FR-341)', () => {
+    // One entity's pairwise links are one transaction, so a crash on the 2nd insert must roll back the
+    // 1st too — no partial link set persists.
+    const orig = DatasetLinksRepo.prototype.insert;
+    let n = 0;
+    DatasetLinksRepo.prototype.insert = function (this: DatasetLinksRepo, input) {
+      n += 1;
+      if (n === 2) throw new Error('mid-batch fault');
+      return orig.call(this, input);
+    };
+    try {
+      expect(() =>
+        linkDatasetsForEntity(
+          { db: s.db, entitiesRepo: s.entitiesRepo, linksRepo: s.linksRepo },
+          'geo:bg-municipality-sofia',
+        ),
+      ).toThrow('mid-batch fault');
+    } finally {
+      DatasetLinksRepo.prototype.insert = orig;
+    }
+    expect(s.db.query<{ c: number }, []>('SELECT count(*) AS c FROM dataset_links').get()?.c).toBe(
+      0,
+    );
+    expect(s.linksRepo.forDataset('d1').length).toBe(0);
+  });
+
+  it('is idempotent across re-runs — no duplicate rows (ON CONFLICT upsert, spec 052 FR-342)', () => {
+    const opts = { db: s.db, entitiesRepo: s.entitiesRepo, linksRepo: s.linksRepo };
+    const first = linkDatasetsForEntity(opts, 'geo:bg-municipality-sofia');
+    const second = linkDatasetsForEntity(opts, 'geo:bg-municipality-sofia');
+    expect(first.created).toBe(3);
+    expect(second.created).toBe(3); // re-inserts, but ON CONFLICT updates in place
+    expect(s.db.query<{ c: number }, []>('SELECT count(*) AS c FROM dataset_links').get()?.c).toBe(
+      3,
+    );
   });
 
   it('skips a hub entity whose fan-out exceeds MAX_ENTITY_FANOUT (no O(n²) explosion)', () => {
@@ -108,7 +145,7 @@ describe('enrich.link-datasets', () => {
       });
     }
     const r = linkDatasetsForEntity(
-      { entitiesRepo: s.entitiesRepo, linksRepo: s.linksRepo },
+      { db: s.db, entitiesRepo: s.entitiesRepo, linksRepo: s.linksRepo },
       'tag:регистър',
     );
     expect(r.created).toBe(0);

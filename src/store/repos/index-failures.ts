@@ -21,10 +21,14 @@ export interface IndexFailureRow {
 export class IndexFailuresRepo {
   constructor(private readonly db: Database) {}
 
-  /** Upsert the current not-embedded reason for a dataset (re-failure overwrites, bumps updated_at). */
+  /** Upsert the current not-embedded reason for a dataset (re-failure overwrites, bumps updated_at).
+   *  `ON CONFLICT DO UPDATE`, not `INSERT OR REPLACE` (spec 052 FR-342): one atomic in-place update. */
   record(datasetId: string, reason: string, now: string = nowIso()): void {
     this.db
-      .query('INSERT OR REPLACE INTO index_failures (dataset_id, reason, updated_at) VALUES (?, ?, ?)')
+      .query(
+        `INSERT INTO index_failures (dataset_id, reason, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(dataset_id) DO UPDATE SET reason = excluded.reason, updated_at = excluded.updated_at`,
+      )
       .run(datasetId, reason, now);
   }
 

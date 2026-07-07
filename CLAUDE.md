@@ -150,6 +150,21 @@ capabilities each have their own spec:
   `curate.translate-skipped-stub` log line (FR-332), keeping the `hosted-api` seam intact. The
   `curate.completed` log + `RunCurateResult` now report `translationsWritten`/`translationsSkipped`/
   `translationsEmpty` (FR-333)
+- 052 pipeline write atomicity & one upsert idiom: codifies "one logical pipeline unit = one
+  transaction" as the repo-wide convention (reference: `capture-dataset.ts:61`) and closes the
+  unwrapped gaps — the egov per-resource success/failure triple (`egov-sync.ts`: resource upsert +
+  `recordCapture` + checkpoint mark) and `registerEntities`' per-candidate entity-upsert + attach now
+  run in one `withTransaction` (FR-340); `linkDatasetsForEntity` writes one entity's whole pairwise
+  batch in a single transaction — one commit instead of up to ~1.2k WAL fsyncs on the full mirror —
+  leaving `linkAllSharedEntities` a loop of per-entity transactions (FR-341). Repos now share ONE
+  upsert idiom: a single atomic `INSERT … ON CONFLICT DO UPDATE` (all `INSERT OR REPLACE` sites
+  migrated: `entities.attach`, `dataset-links`, `entity-relations`, `index-failures`,
+  `sync-run-events`; `entities.upsert` collapsed from read-then-write to one statement, FR-342), and
+  where an upsert must diff the old row (`datasets.upsert` field-level revision trail;
+  `translations.upsert` keep-non-empty) the read+write run in one transaction so the diff can't race a
+  stale row (FR-343). Convention recorded in `docs/ARCHITECTURE.md` §3 (FR-344); interrupt-safety
+  tests assert a fault-injected mid-unit throw leaves no partial rows (FR-345). No migration; behavior
+  unchanged (043/048/049/050/051 preserved)
 - 048 egov scope fidelity: `scope` now means the same thing on every portal adapter. The egov-bg path
   previously honored only `scope.datasetIds` and froze the whole portal into the campaign checkpoint.
   Now `enumerateUris` filters `listDatasets` pages by the summary `org_id` (`egovSummaryInScope`,

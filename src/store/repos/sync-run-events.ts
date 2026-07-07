@@ -36,11 +36,22 @@ export interface InsertEventInput {
 export class SyncRunEventsRepo {
   constructor(private readonly db: Database) {}
 
+  // `ON CONFLICT DO UPDATE` on the (run_id, dataset_id, resource_id) primary key, not
+  // `INSERT OR REPLACE` (spec 052 FR-342): a repeated event for the same key updates the row in place
+  // (latest outcome wins) as one atomic statement, rather than delete+reinsert.
   insert(input: InsertEventInput): void {
     const eventAt = input.eventAt ?? nowIso();
     this.db
       .query(
-        `INSERT OR REPLACE INTO sync_run_events (run_id, dataset_id, resource_id, event_at, outcome, bytes, sha256, failure_reason, http_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO sync_run_events (run_id, dataset_id, resource_id, event_at, outcome, bytes, sha256, failure_reason, http_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(run_id, dataset_id, resource_id) DO UPDATE SET
+           event_at = excluded.event_at,
+           outcome = excluded.outcome,
+           bytes = excluded.bytes,
+           sha256 = excluded.sha256,
+           failure_reason = excluded.failure_reason,
+           http_status = excluded.http_status`,
       )
       .run(
         input.runId,

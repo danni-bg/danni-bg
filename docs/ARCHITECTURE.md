@@ -223,6 +223,11 @@ Migrations are applied in numeric order by a checksum-guarded runner (`src/store
 
 Vectors are stored as plain BLOBs; similarity search is in-process cosine + Reciprocal-Rank-Fusion with FTS5. The corpus is deserialized **once** into a resident in-process matrix (`src/index/vector-cache.ts`), reused across queries and invalidated in O(1) against `embeddings_meta.updated_at` — which each `danni index` run bumps once it has written/purged vectors (`bumpEmbeddingsMeta`), so a running explorer/MCP reflects new vectors on its next query without a restart (spec 050). Per-query allocation is O(candidates), not O(corpus). The `sqlite-vec` `vec0` virtual-table path remains an optional future upgrade for true ANN; `openDb` does **not** load the extension by default (`loadVec` defaults to `false`) and opens fine without the vendored binary.
 
+**Write-atomicity & upsert convention (spec 052).** Two rules hold across the write layer:
+
+1. **One logical pipeline unit = one transaction.** A write that spans several tables to persist a single unit runs inside one `withTransaction` (`src/store/db.ts`) so an interrupt (or a second writer, once one exists) can never leave half a unit. The reference example is `src/crawler/capture-dataset.ts:61` (org + dataset + revisions + resources for one CKAN dataset). The same closure wraps the egov per-resource capture triple (`egov-sync.ts`: resource upsert + `recordCapture` + checkpoint mark), `registerEntities`' per-candidate entity-upsert + attach, and one entity's whole pairwise-link batch in `linkDatasetsForEntity` (one commit instead of up to ~1.2k).
+2. **Repos upsert with one atomic statement — `INSERT … ON CONFLICT(…) DO UPDATE`** — never `INSERT OR REPLACE` (delete+reinsert: FK-cascade / rowid churn) and never a bare read-then-`INSERT`/`UPDATE`. Where an upsert must diff the old row (the field-level revision trail in `datasets.upsert`, the keep-non-empty rule in `translations.upsert`), the read **and** the write execute inside one transaction so the diff can't be computed against a stale row.
+
 ---
 
 ## 4. Configuration (`danni.config.json`)

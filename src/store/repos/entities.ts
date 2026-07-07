@@ -46,25 +46,18 @@ export interface AttachEntityInput {
 export class EntitiesRepo {
   constructor(private readonly db: Database) {}
 
+  // No field-diff to compute, so this is the plain single-statement upsert idiom (spec 052 FR-342):
+  // one atomic `INSERT ... ON CONFLICT DO UPDATE`, never a racy read-then-write.
   upsert(input: UpsertEntityInput): EntityRow {
-    const existing = this.get(input.id);
-    if (existing) {
-      this.db
-        .query(
-          'UPDATE entities SET kind = ?, canonical_label_bg = ?, canonical_label_en = ?, attributes_json = ? WHERE id = ?',
-        )
-        .run(
-          input.kind,
-          input.canonicalLabelBg,
-          input.canonicalLabelEn ?? null,
-          JSON.stringify(input.attributes ?? {}),
-          input.id,
-        );
-      return this.get(input.id) as EntityRow;
-    }
     this.db
       .query(
-        'INSERT INTO entities (id, kind, canonical_label_bg, canonical_label_en, attributes_json) VALUES (?, ?, ?, ?, ?)',
+        `INSERT INTO entities (id, kind, canonical_label_bg, canonical_label_en, attributes_json)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           kind = excluded.kind,
+           canonical_label_bg = excluded.canonical_label_bg,
+           canonical_label_en = excluded.canonical_label_en,
+           attributes_json = excluded.attributes_json`,
       )
       .run(
         input.id,
@@ -80,11 +73,19 @@ export class EntitiesRepo {
     return this.db.query<EntityRow, [string]>('SELECT * FROM entities WHERE id = ?').get(id) ?? null;
   }
 
+  // `ON CONFLICT DO UPDATE` rather than `INSERT OR REPLACE` (spec 052 FR-342): the latter is
+  // delete+reinsert (fires FK cascade / rowid churn); this in-place update is the safer single
+  // atomic statement on the (dataset_id, entity_id, extractor) primary key.
   attach(input: AttachEntityInput): void {
     const at = input.attachedAt ?? nowIso();
     this.db
       .query(
-        `INSERT OR REPLACE INTO dataset_entities (dataset_id, entity_id, extractor, confidence, evidence_json, attached_at) VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO dataset_entities (dataset_id, entity_id, extractor, confidence, evidence_json, attached_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(dataset_id, entity_id, extractor) DO UPDATE SET
+           confidence = excluded.confidence,
+           evidence_json = excluded.evidence_json,
+           attached_at = excluded.attached_at`,
       )
       .run(
         input.datasetId,

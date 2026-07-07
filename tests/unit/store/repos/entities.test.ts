@@ -53,6 +53,15 @@ describe('store.repos.entities', () => {
     expect(s.repo.datasetsForEntity('tag:x')).toEqual(['d1', 'd2']);
   });
 
+  it('re-attach is idempotent and updates in place (ON CONFLICT DO UPDATE, spec 052 FR-342)', () => {
+    s.repo.upsert({ id: 'tag:x', kind: 'tag', canonicalLabelBg: 'x' });
+    s.repo.attach({ datasetId: 'd1', entityId: 'tag:x', extractor: 'ckan_tags', confidence: 0.6 });
+    s.repo.attach({ datasetId: 'd1', entityId: 'tag:x', extractor: 'ckan_tags', confidence: 0.9 });
+    const list = s.repo.listAttachments('d1');
+    expect(list.length).toBe(1); // same PK → in-place update, not a duplicate row
+    expect(list[0]?.confidence).toBe(0.9);
+  });
+
   it('entitiesForDataset joins via dataset_entities', () => {
     s.repo.upsert({ id: 'tag:y', kind: 'tag', canonicalLabelBg: 'y' });
     s.repo.attach({ datasetId: 'd1', entityId: 'tag:y', extractor: 'ckan_tags', confidence: 0.6 });

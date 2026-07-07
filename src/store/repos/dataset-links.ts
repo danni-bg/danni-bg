@@ -28,9 +28,16 @@ export class DatasetLinksRepo {
       : [input.datasetB, input.datasetA];
     if (a === b) return null;
     const at = input.createdAt ?? nowIso();
+    // `ON CONFLICT DO UPDATE`, not `INSERT OR REPLACE` (spec 052 FR-342): a single atomic statement
+    // on the (dataset_a_id, dataset_b_id, via_entity_id, heuristic) primary key that updates in place
+    // instead of delete+reinsert.
     this.db
       .query(
-        `INSERT OR REPLACE INTO dataset_links (dataset_a_id, dataset_b_id, via_entity_id, heuristic, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO dataset_links (dataset_a_id, dataset_b_id, via_entity_id, heuristic, confidence, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(dataset_a_id, dataset_b_id, via_entity_id, heuristic) DO UPDATE SET
+           confidence = excluded.confidence,
+           created_at = excluded.created_at`,
       )
       .run(a, b, input.viaEntityId, input.heuristic, input.confidence, at);
     return {
