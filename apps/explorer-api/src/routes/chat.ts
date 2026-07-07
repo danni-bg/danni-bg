@@ -45,12 +45,14 @@ export interface ChatRouteDeps {
   sessions: ConversationStore;
   /** Runs turns detached so they survive a client disconnect (mid-stream resume). */
   generations: GenerationManager;
-  /** Resolves the language model from server-side configuration only (spec 035 FR-171). */
-  selectModel: () => LanguageModel;
+  /** Resolves the language model from server-side configuration only (spec 035 FR-171), through the
+   * caller's active org so a per-tenant LLM override applies (spec 042 FR-240). */
+  selectModel: (tenantId?: string) => LanguageModel;
   /** Per-user token metering (optional; omitted in focused unit tests). */
   usage?: TokenUsageRepo;
-  /** Resolve the platform default token quota (0/undefined = unlimited) per request. */
-  defaultTokenLimit?: () => number | undefined;
+  /** Resolve the platform default token quota (0/undefined = unlimited) per request, through the
+   * caller's active org (spec 042 FR-240): a per-tenant `defaultTokenLimit` override applies. */
+  defaultTokenLimit?: (tenantId?: string) => number | undefined;
   /** Resolve the cache-hit token weight (0–1) per request; undefined = default. */
   cacheWeight?: () => number | undefined;
   /** Resolve the max output tokens per answer; undefined = built-in default. */
@@ -80,7 +82,7 @@ export function chatHandler(deps: ChatRouteDeps) {
     // records the outcome + LLM tokens/cost below.
     const requestId = c.get('requestId') as string | undefined;
     if (deps.usage && user) {
-      const limit = effectiveLimit(user.token_limit, deps.defaultTokenLimit?.());
+      const limit = effectiveLimit(user.token_limit, deps.defaultTokenLimit?.(tenantId));
       const { used, cached } = deps.usage.usageForUser(user.id, user.usage_reset_at);
       const billable = billableTokens(used, cached, deps.cacheWeight?.());
       if (quotaView(billable, limit).exceeded) {
@@ -130,7 +132,7 @@ export function chatHandler(deps: ChatRouteDeps) {
     // error event (FR-023/FR-173).
     let model: LanguageModel;
     try {
-      model = deps.selectModel();
+      model = deps.selectModel(tenantId);
     } catch (e) {
       const code = e instanceof ProviderError ? e.code : 'provider_error';
       deps.metrics?.recordChatOutcome('error');

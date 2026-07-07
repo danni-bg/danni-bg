@@ -89,6 +89,18 @@ capabilities each have their own spec:
   `listForTenant`) is the tenant-scoped key view. New keys/sessions/usage attribute to the caller's
   active org (FR-233). API-key requests keep the key's own tenant (keys are tenant-bound). Preserves
   spec 036's insert-only `addMember` + owner protection — builds on 027/029
+- 042 tenant-scoped settings resolution: fulfils spec 029 FR-131 at the API layer (migration 017 made
+  `platform_settings` `(tenant_id,key)`, but every caller read/wrote only `global`). Runtime resolution
+  now goes through the caller's ACTIVE org (spec 041) — `settings.get(key, activeTenantId)`: tenant
+  override wins, `global` is the fallback — for the chat LLM provider (`resolveServerDefault`) and the
+  per-tenant `defaultTokenLimit`. Org admins manage their org's overrides via `GET/PUT
+  /api/tenant/settings` (`requireTenantAdmin`); the overridable set is an explicit ALLOWLIST
+  (`TENANT_OVERRIDABLE_KEYS` in `admin/tenant-settings.ts`: the LLM provider + `defaultTokenLimit` only;
+  platform toggles + `apiRate*`/`apiQuota*` stay global — a non-allowlisted write is a 400). Super-admin
+  views/clears any org's overrides via `GET/DELETE /api/admin/tenants/:id/settings`. Isolation invariant
+  (FR-243): no tenant-facing response carries another tenant's or the global secret — an inherited LLM
+  view exposes only `apiKeyConfigured` (never a hint); secret mask/merge mirrors the admin surface. No
+  migration (017 sufficed). Repo gains `own()`/`clear()`. Builds on 019/029/041
 - 043 store operational safety: the one `store/danni.sqlite` now holds SaaS state alongside the
   mirror, so `openDb` sets `PRAGMA busy_timeout` (5s, `DEFAULT_BUSY_TIMEOUT_MS`) — a second writer
   (pipeline vs. serving) queues instead of throwing `SQLITE_BUSY`; a `danni backup <dest>` CLI takes a

@@ -35,6 +35,23 @@ export class PlatformSettingsRepo {
     return global ? JSON.parse(global.value_json) : null;
   }
 
+  /**
+   * The tenant's OWN value for a key with NO global fallback — null when the tenant hasn't overridden
+   * it. Distinguishes "overridden" from "inherited" and lets a caller merge a secret against the
+   * tenant's own prior value only, never the global secret (spec 042 FR-243).
+   */
+  own(key: string, tenantId: string): unknown {
+    const r = this.row(tenantId, key);
+    return r ? JSON.parse(r.value_json) : null;
+  }
+
+  /** Remove a tenant's override for a key (it falls back to the global row thereafter, spec 042). */
+  clear(key: string, tenantId: string): void {
+    this.db
+      .query('DELETE FROM platform_settings WHERE tenant_id = ? AND key = ?')
+      .run(tenantId, key);
+  }
+
   private row(tenantId: string, key: string): SettingRow | null {
     return this.db
       .query<SettingRow, [string, string]>(

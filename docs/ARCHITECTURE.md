@@ -401,9 +401,15 @@ On top of the read substrate sits an authenticated chat platform (specs 019–02
   `X-User-*` headers are honored only behind the `TRUST_PROXY_AUTH_HEADERS` opt-in — spec 034).
   Tiers live in the app `users` table
   (`role ∈ {admin,user}`, keyed by `kratos_identity_id`), not Kratos; first admin via `danni admin grant`.
-- **Admin settings (spec 019).** Runtime, admin-editable `platform_settings` (k/v): the chat's LLM
-  provider (kind/model/baseUrl/apiKey, API key masked) + toggles — resolved per request, so edits
-  apply without a restart.
+- **Admin settings (spec 019, tenant-scoped spec 042).** Runtime, admin-editable `platform_settings`
+  (k/v): the chat's LLM provider (kind/model/baseUrl/apiKey, API key masked) + toggles — resolved per
+  request, so edits apply without a restart. **Resolution goes through the caller's active org**
+  (`settings.get(key, activeTenantId)`): a tenant override wins, the `global` row is the fallback. Org
+  admins manage their org's OVERRIDABLE keys (an explicit allowlist — the LLM provider +
+  `defaultTokenLimit`; platform toggles/api rate-quota knobs stay global) via `GET/PUT
+  /api/tenant/settings`; super-admins manage `global` via `/api/admin/settings` and can view/clear any
+  org's overrides. A tenant-facing view never returns another tenant's or the global secret (an
+  inherited LLM shows only that a key exists, never a hint).
 - **Token metering & quotas (spec 021).** Every chat turn records per-user token usage
   (`token_usage`: input/output/total + cache hits). The chat gate enforces an effective per-user
   quota (per-user override → platform default → unlimited) and 429s when exceeded; cache hits count at
