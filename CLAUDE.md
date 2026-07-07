@@ -189,5 +189,21 @@ capabilities each have their own spec:
   output is unchanged. Migration is additive: existing `raw.{csv,json,txt}` archives still curate via
   the legacy curators, no re-crawl required (FR-313); a curation fix now re-runs from raw alone (FR-314)
 
+- 058 chat session lifecycle extraction: the 676-line `ChatPanel` god-component is split — the whole
+  session state machine (messages, streaming flag, live token/usage + elapsed meters, session id +
+  localStorage persistence, the single session-message→`ChatMessage` mapper, and send/stop/new/open/
+  delete/resume) now lives in `chat/useChatSession.ts` as a framework-agnostic zustand/vanilla store
+  (`createChatSessionStore`, unit-tested like `explorerStore`) behind a thin React `useChatSession`
+  hook; `ChatPanel` is layout + rendering + input only (FR-410). Mount-time restore routes its
+  mid-stream resume through the SAME `attachStream` path as send/open — the duplicated ~55-line effect
+  and the second mapper copy are gone (FR-411), so aborting a resume (new chat / switch / unmount) no
+  longer throws an uncaught `AbortError` and a genuine network failure surfaces the shared
+  `'мрежова грешка'` affordance (FR-412). Resumed turns OMIT `durationMs` rather than record a bogus
+  from-re-attach value (FR-413; server `startedAt` is the non-blocking follow-on). The dead `onTool`
+  callback + `tool` SSE case are dropped — the server still emits `tool`, which now falls through the
+  router harmlessly (FR-414). The `sse.ts`/`dispatchSSEEvent`/`sendChat`/`resumeChat` transport layer
+  is preserved unchanged; the hook composes it. Injectable transport/api/storage give `bun:test`
+  coverage for send, resume, abort- and network-failure-during-resume, and new/open/delete (FR-415)
+
 Project constitution: `.specify/memory/constitution.md` (v1.1.1; the locked test runner is `bun:test`).
 <!-- SPECKIT END -->
