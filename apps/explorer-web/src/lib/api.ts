@@ -1,6 +1,9 @@
-// Typed fetch client over the explorer API (T018). URL building is pure (and unit-tested); the
-// thin fetch wrappers reuse it. Large result sets are paginated via limit/offset (FR-030).
+// Typed fetch client over the explorer API (T018). A thin, typed facade over the shared `request`
+// helper (spec 057, FR-400) — URL building + non-OK → typed error live in `lib/http.ts`, not here.
+// Large result sets are paginated via limit/offset (FR-030).
 
+// The GET /api/datasets/:id response shape is single-sourced from the API (spec 059 FR-422).
+import type { DatasetDetailView } from '../../../explorer-api/src/schemas.ts';
 import type {
   DatasetPointer,
   Facets,
@@ -9,22 +12,15 @@ import type {
   ResourceContent,
 } from '../types.ts';
 import type { GridSort } from './grid.ts';
+import { buildUrl, request } from './http.ts';
 import { filterStateToParams } from './scope.ts';
+
+// `buildUrl` now lives in `lib/http.ts`; re-exported here for the existing import sites + tests.
+export { buildUrl };
 
 export interface GridQuery {
   sort: GridSort | null;
   filters: Record<string, string>;
-}
-
-export function buildUrl(path: string, params?: URLSearchParams): string {
-  const qs = params?.toString();
-  return qs ? `${path}?${qs}` : path;
-}
-
-async function getJson<T>(path: string, params?: URLSearchParams): Promise<T> {
-  const res = await fetch(buildUrl(path, params));
-  if (!res.ok) throw new Error(`request failed: ${res.status} ${path}`);
-  return (await res.json()) as T;
 }
 
 export interface DatasetsResponse {
@@ -46,22 +42,28 @@ export function fetchRegions(
 ): Promise<{ regions: RegionSummary[] }> {
   const params = filterStateToParams(f);
   params.set('level', level);
-  return getJson('/api/regions', params);
+  return request('/api/regions', { params });
 }
 
 export function fetchDatasets(f: FilterState, limit = 50, offset = 0): Promise<DatasetsResponse> {
   const params = filterStateToParams(f);
   params.set('limit', String(limit));
   params.set('offset', String(offset));
-  return getJson('/api/datasets', params);
+  return request('/api/datasets', { params });
+}
+
+export function fetchDataset(datasetId: string): Promise<DatasetDetailView> {
+  return request(`/api/datasets/${encodeURIComponent(datasetId)}`);
 }
 
 export function fetchRegion(entityId: string, f: FilterState): Promise<RegionDatasetsResponse> {
-  return getJson(`/api/regions/${encodeURIComponent(entityId)}`, filterStateToParams(f));
+  return request(`/api/regions/${encodeURIComponent(entityId)}`, {
+    params: filterStateToParams(f),
+  });
 }
 
 export function fetchFacets(f: FilterState): Promise<Facets> {
-  return getJson('/api/facets', filterStateToParams(f));
+  return request('/api/facets', { params: filterStateToParams(f) });
 }
 
 /** Paginated/sampled rows (or document/text) of one resource — the data drilldown (FR-005/030). */
@@ -83,9 +85,9 @@ export function fetchResourceRows(
     );
     if (Object.keys(active).length > 0) params.set('filters', JSON.stringify(active));
   }
-  return getJson(
+  return request(
     `/api/datasets/${encodeURIComponent(datasetId)}/resources/${encodeURIComponent(resourceId)}/rows`,
-    params,
+    { params },
   );
 }
 
@@ -94,5 +96,5 @@ export function fetchNational(f: FilterState, limit = 50, offset = 0): Promise<D
   const params = filterStateToParams(f);
   params.set('limit', String(limit));
   params.set('offset', String(offset));
-  return getJson('/api/national', params);
+  return request('/api/national', { params });
 }

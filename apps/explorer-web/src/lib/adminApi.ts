@@ -1,4 +1,7 @@
-// Admin platform settings API client (spec 019). Same-origin (cookies flow through Oathkeeper).
+// Admin platform settings API client (spec 019). Same-origin (cookies flow through Oathkeeper). A
+// typed facade over the shared `request` helper (spec 057, FR-400) — every call is cookie-authed.
+
+import { request } from './http.ts';
 
 export interface AdminLlm {
   kind: string;
@@ -49,43 +52,26 @@ export interface AdminUsage {
   defaultLimit: number;
 }
 
-export async function getSettings(): Promise<AdminSettings> {
-  const res = await fetch('/api/admin/settings', { credentials: 'include' });
-  if (!res.ok) throw new Error(`settings request failed: ${res.status}`);
-  return (await res.json()) as AdminSettings;
+export function getSettings(): Promise<AdminSettings> {
+  return request('/api/admin/settings', { authed: true });
 }
 
-export async function putSettings(body: SettingsPut): Promise<AdminSettings> {
-  const res = await fetch('/api/admin/settings', {
+export function putSettings(body: SettingsPut): Promise<AdminSettings> {
+  return request('/api/admin/settings', { method: 'PUT', body, authed: true });
+}
+
+export function getUsage(): Promise<AdminUsage> {
+  return request('/api/admin/usage', { authed: true });
+}
+
+export function setUserLimit(userId: string, limit: number | null): Promise<void> {
+  return request(`/api/admin/users/${userId}/limit`, {
     method: 'PUT',
-    credentials: 'include',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+    body: { limit },
+    authed: true,
   });
-  if (!res.ok) throw new Error(`settings update failed: ${res.status}`);
-  return (await res.json()) as AdminSettings;
 }
 
-export async function getUsage(): Promise<AdminUsage> {
-  const res = await fetch('/api/admin/usage', { credentials: 'include' });
-  if (!res.ok) throw new Error(`usage request failed: ${res.status}`);
-  return (await res.json()) as AdminUsage;
-}
-
-export async function setUserLimit(userId: string, limit: number | null): Promise<void> {
-  const res = await fetch(`/api/admin/users/${userId}/limit`, {
-    method: 'PUT',
-    credentials: 'include',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ limit }),
-  });
-  if (!res.ok) throw new Error(`set limit failed: ${res.status}`);
-}
-
-export async function resetUserUsage(userId: string): Promise<void> {
-  const res = await fetch(`/api/admin/users/${userId}/reset`, {
-    method: 'POST',
-    credentials: 'include',
-  });
-  if (!res.ok) throw new Error(`reset failed: ${res.status}`);
+export function resetUserUsage(userId: string): Promise<void> {
+  return request(`/api/admin/users/${userId}/reset`, { method: 'POST', authed: true });
 }

@@ -1,11 +1,10 @@
-import { useEffect, useState } from 'react';
-// The GET /api/datasets/:id response shape is single-sourced from the API (spec 059 FR-422).
-import type { DatasetDetailView } from '../../../explorer-api/src/schemas.ts';
+import { ErrorState } from '../components/StatusMessage.tsx';
 import { Button } from '../components/ui/button.tsx';
 import { Card } from '../components/ui/card.tsx';
-import { buildUrl } from '../lib/api.ts';
+import { fetchDataset } from '../lib/api.ts';
 import { cn } from '../lib/cn.ts';
 import { bilingualLabel, freshnessDisplay } from '../lib/format.ts';
+import { useServerState } from '../lib/useServerState.ts';
 import { useExplorer } from '../store/explorerStore.ts';
 
 interface DatasetDetailProps {
@@ -14,35 +13,23 @@ interface DatasetDetailProps {
 }
 
 export function DatasetDetail({ datasetId, onClose }: DatasetDetailProps) {
-  const [detail, setDetail] = useState<DatasetDetailView | null>(null);
-  const [error, setError] = useState(false);
+  const {
+    data: detail,
+    status,
+    refetch,
+  } = useServerState(datasetId, () => fetchDataset(datasetId));
   const setChatFocus = useExplorer((s) => s.setChatFocus);
   const openReader = useExplorer((s) => s.openReader);
   const reader = useExplorer((s) => s.reader);
-
-  useEffect(() => {
-    let cancelled = false;
-    setDetail(null);
-    setError(false);
-    fetch(buildUrl(`/api/datasets/${encodeURIComponent(datasetId)}`))
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('not found'))))
-      .then((d: DatasetDetailView) => {
-        if (!cancelled) setDetail(d);
-      })
-      .catch(() => {
-        if (!cancelled) setError(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [datasetId]);
 
   return (
     <section className="space-y-3">
       <Button variant="ghost" size="sm" onClick={onClose}>
         ← обратно
       </Button>
-      {error && <p className="text-sm text-destructive">Грешка при зареждане на набора.</p>}
+      {status === 'error' && (
+        <ErrorState message="Грешка при зареждане на набора." onRetry={refetch} />
+      )}
       {detail && (
         <Card className="space-y-2 p-4">
           <h2 className="font-semibold leading-snug">

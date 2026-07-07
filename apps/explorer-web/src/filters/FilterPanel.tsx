@@ -1,9 +1,11 @@
 import { ChevronDown } from 'lucide-react';
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useState } from 'react';
+import { ErrorState } from '../components/StatusMessage.tsx';
 import { Badge } from '../components/ui/badge.tsx';
 import { fetchFacets } from '../lib/api.ts';
 import { cn } from '../lib/cn.ts';
 import { removeChip, setFreshness, toChips, toggleValue } from '../lib/filters.ts';
+import { useServerState } from '../lib/useServerState.ts';
 import { useExplorer } from '../store/explorerStore.ts';
 import type { Facets, FreshnessFilter } from '../types.ts';
 
@@ -58,22 +60,18 @@ export function FilterPanel({ geoLabel }: FilterPanelProps = {}) {
   const updateFilters = useExplorer((s) => s.updateFilters);
   const clearFilters = useExplorer((s) => s.clearFilters);
 
-  const [facets, setFacets] = useState<Facets>(EMPTY_FACETS);
   const [tagQuery, setTagQuery] = useState('');
   const [showAllTags, setShowAllTags] = useState(false);
   const [showAllPublishers, setShowAllPublishers] = useState(false);
   const [open, setOpen] = useState({ freshness: true, tags: true, publishers: false });
 
   // Available facets reflect the current filters (counts narrow as you refine — conjunctive faceting).
-  useEffect(() => {
-    let cancelled = false;
-    fetchFacets(filters)
-      .then((f) => !cancelled && setFacets(f))
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [filters]);
+  const facetsQuery = useServerState(`facets:${JSON.stringify(filters)}`, () =>
+    fetchFacets(filters),
+  );
+  // Keep the last-good facets shape for rendering; a failure is surfaced separately (FR-403) rather
+  // than collapsing into an empty panel indistinguishable from a genuinely empty result.
+  const facets: Facets = facetsQuery.data ?? EMPTY_FACETS;
 
   const chips = toChips(filters);
   const chipLabel = (chip: ReturnType<typeof toChips>[number]): string => {
@@ -97,6 +95,9 @@ export function FilterPanel({ geoLabel }: FilterPanelProps = {}) {
       <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         Филтри
       </h2>
+      {facetsQuery.status === 'error' && (
+        <ErrorState message="Неуспешно зареждане на филтрите." onRetry={facetsQuery.refetch} />
+      )}
       {chips.length > 0 && (
         <div className="space-y-1">
           <div className="flex items-center justify-between">

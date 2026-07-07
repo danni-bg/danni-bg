@@ -2,36 +2,32 @@
 // shown ONCE), list active keys (prefix + last used), and revoke. Human-session only — these calls
 // 403 for an API-key caller.
 
-import { useEffect, useState } from 'react';
-import {
-  type ApiKeyView,
-  createApiKey,
-  getApiUsage,
-  listApiKeys,
-  revokeApiKey,
-} from '../lib/meApi.ts';
+import { useState } from 'react';
+import { ErrorState, Loading } from '../components/StatusMessage.tsx';
+import { createApiKey, getApiUsage, listApiKeys, revokeApiKey } from '../lib/meApi.ts';
+import { useServerState } from '../lib/useServerState.ts';
 
 const dt = new Intl.DateTimeFormat('bg-BG', { dateStyle: 'medium' });
 const fmtDate = (iso: string | null) => (iso ? dt.format(new Date(iso)) : '—');
 
 export function ApiKeys() {
-  const [keys, setKeys] = useState<ApiKeyView[] | null>(null);
-  const [usageByKey, setUsageByKey] = useState<Record<string, number>>({});
-  const [error, setError] = useState<string | null>(null);
+  const keysQuery = useServerState('me:api-keys', listApiKeys);
+  // Per-key request counts are supplementary — a failure just omits the counts, not the key list.
+  const usageQuery = useServerState('me:api-usage', getApiUsage);
+  const keys = keysQuery.data ?? null;
+  const usageByKey: Record<string, number> = usageQuery.data
+    ? Object.fromEntries(usageQuery.data.byKey.map((k) => [k.keyId, k.count]))
+    : {};
+  const [error, setError] = useState<string | null>(null); // mutation (create/revoke) error only
   const [name, setName] = useState('');
   const [creating, setCreating] = useState(false);
   const [fresh, setFresh] = useState<string | null>(null); // plaintext shown once after creation
   const [copied, setCopied] = useState(false);
 
-  function load() {
-    listApiKeys()
-      .then(setKeys)
-      .catch(() => setError('Неуспешно зареждане на ключовете.'));
-    getApiUsage()
-      .then((u) => setUsageByKey(Object.fromEntries(u.byKey.map((k) => [k.keyId, k.count]))))
-      .catch(() => {});
+  function reload() {
+    keysQuery.refetch();
+    usageQuery.refetch();
   }
-  useEffect(load, []);
 
   async function create() {
     const trimmed = name.trim();
@@ -43,7 +39,7 @@ export function ApiKeys() {
       setFresh(k.key);
       setCopied(false);
       setName('');
-      load();
+      reload();
     } catch {
       setError('Неуспешно създаване на ключ.');
     } finally {
@@ -54,7 +50,7 @@ export function ApiKeys() {
   async function revoke(id: string) {
     try {
       await revokeApiKey(id);
-      load();
+      reload();
     } catch {
       setError('Неуспешно анулиране.');
     }
@@ -123,8 +119,10 @@ export function ApiKeys() {
         </button>
       </div>
 
-      {keys == null ? (
-        <p className="text-sm text-muted-foreground">Зареждане…</p>
+      {keysQuery.status === 'error' ? (
+        <ErrorState message="Неуспешно зареждане на ключовете." onRetry={keysQuery.refetch} />
+      ) : keys == null ? (
+        <Loading />
       ) : active.length === 0 ? (
         <p className="text-xs text-muted-foreground">Няма активни ключове.</p>
       ) : (

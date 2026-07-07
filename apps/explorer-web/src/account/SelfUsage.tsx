@@ -1,24 +1,14 @@
 // Per-user token-usage section for the settings page (token metering). Shows the caller's own usage
 // against their effective quota with a small progress bar.
 
-import { useEffect, useState } from 'react';
-import { type MyUsage, getMyUsage } from '../lib/meApi.ts';
+import { ErrorState, Loading } from '../components/StatusMessage.tsx';
+import { getMyUsage } from '../lib/meApi.ts';
+import { useServerState } from '../lib/useServerState.ts';
 
 const nf = new Intl.NumberFormat('bg-BG');
 
 export function SelfUsage() {
-  const [usage, setUsage] = useState<MyUsage | null>(null);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    getMyUsage()
-      .then((u) => active && setUsage(u))
-      .catch(() => active && setError(true));
-    return () => {
-      active = false;
-    };
-  }, []);
+  const { data: usage, status, refetch } = useServerState('me:usage', getMyUsage);
 
   const unlimited = usage != null && usage.limit <= 0;
   const pct =
@@ -30,10 +20,10 @@ export function SelfUsage() {
         <h2 className="text-sm font-semibold">Употреба на токени</h2>
         <p className="text-xs text-muted-foreground">Изразходвани токени за чата</p>
       </div>
-      {error ? (
-        <p className="text-sm text-destructive">Неуспешно зареждане.</p>
+      {status === 'error' ? (
+        <ErrorState message="Неуспешно зареждане." onRetry={refetch} />
       ) : usage == null ? (
-        <p className="text-sm text-muted-foreground">Зареждане…</p>
+        <Loading />
       ) : (
         <div className="space-y-2">
           <div className="flex items-baseline justify-between text-sm">

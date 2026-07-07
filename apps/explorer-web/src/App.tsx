@@ -4,6 +4,7 @@ import municipalitiesRaw from '../../../packages/geo-boundaries/data/municipalit
 import oblastsRaw from '../../../packages/geo-boundaries/data/oblasts.geojson?raw';
 import { AuthWidget } from './auth/AuthWidget.tsx';
 import { ChatPanel } from './chat/ChatPanel.tsx';
+import { ErrorState } from './components/StatusMessage.tsx';
 import { Button } from './components/ui/button.tsx';
 import { DatasetDetail } from './datasets/DatasetDetail.tsx';
 import { DatasetList } from './datasets/DatasetList.tsx';
@@ -14,10 +15,11 @@ import { fetchDatasets, fetchNational, fetchRegions } from './lib/api.ts';
 import type { BoundaryCollection } from './lib/choropleth.ts';
 import { hasMore, mergePage } from './lib/pagination.ts';
 import { type Theme, applyResolvedTheme, loadTheme, resolveTheme } from './lib/theme.ts';
+import { useServerState } from './lib/useServerState.ts';
 import { MapErrorBoundary } from './map/MapErrorBoundary.tsx';
 import { MapView } from './map/MapView.tsx';
 import { useExplorer } from './store/explorerStore.ts';
-import type { DatasetPointer, FilterState, RegionSummary } from './types.ts';
+import type { DatasetPointer, FilterState } from './types.ts';
 
 function usePrefersDark(): boolean {
   const [dark, setDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -44,24 +46,13 @@ export function App() {
     applyResolvedTheme(document.documentElement, resolved);
   }, [resolved]);
 
-  const [regions, setRegions] = useState<RegionSummary[]>([]);
-  const [muniRegions, setMuniRegions] = useState<RegionSummary[]>([]);
-  const [datasets, setDatasets] = useState<DatasetPointer[]>([]);
-  const [total, setTotal] = useState(0);
   const [selectedDataset, setSelectedDataset] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
   const [showNational, setShowNational] = useState(false);
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
 
   const boundaries = useMemo(() => JSON.parse(oblastsRaw) as BoundaryCollection, []);
   const muniBoundaries = useMemo(() => JSON.parse(municipalitiesRaw) as BoundaryCollection, []);
-  const geoLabel = useMemo(() => {
-    const m = new Map(
-      regions.filter((r) => r.entityId).map((r) => [r.entityId as string, r.labelBg]),
-    );
-    return (id: string) => m.get(id) ?? id;
-  }, [regions]);
   const PAGE = 50;
   const loader = showNational ? fetchNational : fetchDatasets;
 
@@ -76,51 +67,53 @@ export function App() {
     [tags, publisherIds, freshness, query, includeWithdrawn],
   );
 
-  // Region choropleth layers (oblast + municipality drill-down), selection-independent.
-  useEffect(() => {
-    let cancelled = false;
-    fetchRegions(regionFilters, 'oblast')
-      .then((r) => {
-        if (!cancelled) setRegions(r.regions);
-      })
-      .catch(() => undefined);
-    fetchRegions(regionFilters, 'municipality')
-      .then((r) => {
-        if (!cancelled) setMuniRegions(r.regions);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [regionFilters]);
+  // Region choropleth layers (oblast + municipality drill-down), selection-independent. Each layer is
+  // a keyed query; a failure surfaces a retry affordance instead of silently rendering an empty map.
+  const regionKey = JSON.stringify(regionFilters);
+  const oblastQuery = useServerState(`regions:oblast:${regionKey}`, () =>
+    fetchRegions(regionFilters, 'oblast'),
+  );
+  const muniQuery = useServerState(`regions:municipality:${regionKey}`, () =>
+    fetchRegions(regionFilters, 'municipality'),
+  );
+  const regions = oblastQuery.data?.regions ?? [];
+  const muniRegions = muniQuery.data?.regions ?? [];
+  const regionsError = oblastQuery.status === 'error' || muniQuery.status === 'error';
+  const retryRegions = () => {
+    oblastQuery.refetch();
+    muniQuery.refetch();
+  };
+  const geoLabel = useMemo(() => {
+    const m = new Map(
+      regions.filter((r) => r.entityId).map((r) => [r.entityId as string, r.labelBg]),
+    );
+    return (id: string) => m.get(id) ?? id;
+  }, [regions]);
 
-  // Dataset list — honors the full filters, including the region selection.
+  // Dataset list — honors the full filters, including the region selection. Page 0 is owned by the
+  // query hook; further pages ("load more") accumulate in `more` and reset when the base query changes.
+  const datasetsKey = JSON.stringify({ filters, national: showNational });
+  const datasetsQuery = useServerState(datasetsKey, () => loader(filters, PAGE, 0));
+  const [more, setMore] = useState<DatasetPointer[]>([]);
+  const [moreError, setMoreError] = useState(false);
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    loader(filters, PAGE, 0)
-      .then((r) => {
-        if (!cancelled) {
-          setDatasets(r.datasets);
-          setTotal(r.total);
-        }
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [filters, loader]);
+    setMore([]);
+    setMoreError(false);
+  }, [datasetsKey]);
 
-  function loadMore() {
-    loader(filters, PAGE, datasets.length)
-      .then((r) => {
-        setDatasets((prev) => mergePage(prev, r.datasets));
-        setTotal(r.total);
-      })
-      .catch(() => undefined);
+  const basePage = datasetsQuery.data?.datasets ?? [];
+  const datasets = more.length ? mergePage(basePage, more) : basePage;
+  const total = datasetsQuery.data?.total ?? 0;
+  const loading = datasetsQuery.loading;
+
+  async function loadMore() {
+    try {
+      const r = await loader(filters, PAGE, datasets.length);
+      setMore((prev) => mergePage(mergePage(basePage, prev), r.datasets).slice(basePage.length));
+      setMoreError(false);
+    } catch {
+      setMoreError(true);
+    }
   }
 
   return (
@@ -165,14 +158,24 @@ export function App() {
             </Button>
             {selectedDataset ? (
               <DatasetDetail datasetId={selectedDataset} onClose={() => setSelectedDataset(null)} />
-            ) : (
-              <DatasetList
-                datasets={datasets}
-                total={total}
-                hasMore={hasMore(datasets.length, total)}
-                onSelect={setSelectedDataset}
-                onLoadMore={loadMore}
+            ) : datasetsQuery.status === 'error' ? (
+              <ErrorState
+                message="Неуспешно зареждане на наборите от данни."
+                onRetry={datasetsQuery.refetch}
               />
+            ) : (
+              <>
+                <DatasetList
+                  datasets={datasets}
+                  total={total}
+                  hasMore={hasMore(datasets.length, total)}
+                  onSelect={setSelectedDataset}
+                  onLoadMore={loadMore}
+                />
+                {moreError && (
+                  <ErrorState message="Неуспешно зареждане на още набори." onRetry={loadMore} />
+                )}
+              </>
             )}
           </div>
         </aside>
@@ -205,6 +208,11 @@ export function App() {
               isDark={resolved === 'dark'}
             />
           </MapErrorBoundary>
+          {regionsError && (
+            <div className="-translate-x-1/2 absolute top-3 left-1/2 z-10 rounded-md border bg-card/95 px-3 py-2 shadow-md backdrop-blur">
+              <ErrorState message="Неуспешно зареждане на картата." onRetry={retryRegions} />
+            </div>
+          )}
           {/* Centre document reader — overlays the map when a resource is opened. */}
           <ResourceReader />
         </main>
