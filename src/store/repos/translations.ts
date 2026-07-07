@@ -35,7 +35,8 @@ export class TranslationsRepo {
     const at = input.createdAt ?? nowIso();
     const existing = this.findExact(input.subjectKind, input.subjectId, input.translator);
     if (existing) {
-      // Don't overwrite a previously-non-empty text_en with empty unless explicitly forced.
+      // Don't overwrite a previously-non-empty text_en with an empty result: a
+      // translator that returns nothing must not erase a good prior translation.
       const nextEn = input.textEn === '' && existing.text_en !== '' ? existing.text_en : input.textEn;
       this.db
         .query(

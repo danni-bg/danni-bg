@@ -20,8 +20,15 @@ export interface LocalMarianMtOptions {
  */
 export class LocalMarianMtTranslator implements Translator {
   readonly id: string;
+  /**
+   * True when no `translateFn` is wired: the translator can only return empty
+   * output, so curate skips the whole translate stage (spec 051 FR-332). Wiring
+   * a `translateFn` (or switching to `hosted-api`) re-enables the stage.
+   */
+  readonly noop: boolean;
   constructor(private readonly opts: LocalMarianMtOptions = {}) {
     this.id = `local-marianmt:${opts.modelVersion ?? 'stub-0.0'}`;
+    this.noop = !opts.translateFn;
   }
   async translate(text: string, _src: 'bg', _tgt: 'en'): Promise<TranslationResult> {
     if (this.opts.translateFn) {
