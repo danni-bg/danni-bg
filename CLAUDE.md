@@ -177,5 +177,17 @@ capabilities each have their own spec:
   sqlite-vec by default (`loadVec` defaults to `false`) and opens on a clean checkout without the
   (absent) vendored binary; the `vec0` path stays an opt-in operator seam (FR-322)
 
+- 049 byte-faithful egov capture: the egov adapter used to run curation-grade transforms (CSV
+  serialization, numeric heuristics, 2-row `flattenHeader`, envelope drop, absent-data → `[]`,
+  JSON re-serialization) BEFORE writing `store/raw/`, so "raw" was a derived artifact and a
+  header-flatten bug could only be fixed by re-crawling. Now `getResourceData` returns the VERBATIM
+  response body and capture writes those exact bytes as `raw.json` (`store/raw/` is byte-faithful on
+  both adapters — FR-310). All transformation moved into a `DatastoreJsonCurator`
+  (`src/curate/datastore-json.ts`; `rowsToCsv`/`flattenHeader` + their tests moved out of
+  `src/crawler/`), selected by the registry via the recorded `EGOV_DATASTORE_FORMAT` hint ahead of
+  the generic `JsonCurator` (FR-311/312). It reuses the CSV/JSON/Text curators' cores, so curated
+  output is unchanged. Migration is additive: existing `raw.{csv,json,txt}` archives still curate via
+  the legacy curators, no re-crawl required (FR-313); a curation fix now re-runs from raw alone (FR-314)
+
 Project constitution: `.specify/memory/constitution.md` (v1.1.1; the locked test runner is `bun:test`).
 <!-- SPECKIT END -->

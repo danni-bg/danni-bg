@@ -15,7 +15,7 @@ import type {
 import { CrawlCheckpointsRepo } from '../store/repos/crawl-checkpoints.ts';
 import { DatasetsRepo } from '../store/repos/datasets.ts';
 import { OrganizationsRepo } from '../store/repos/organizations.ts';
-import { ResourcesRepo } from '../store/repos/resources.ts';
+import { EGOV_DATASTORE_FORMAT, ResourcesRepo } from '../store/repos/resources.ts';
 import { decideDatasetSkip } from './crawl-checkpoint.ts';
 import type { EgovBgClient } from './egov-bg-client.ts';
 import { datasetValidator } from './egov-validator.ts';
@@ -63,104 +63,6 @@ function slugify(s: string): string {
       .replace(/^-+|-+$/g, '')
       .slice(0, 80) || 'item'
   );
-}
-
-function csvCell(v: unknown): string {
-  const s = v === null || v === undefined ? '' : String(v);
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-/** Serialize datastore rows (array-of-arrays, header first) to CSV bytes. */
-export function rowsToCsv(rows: unknown[]): string {
-  return `${rows.map((r) => (Array.isArray(r) ? r.map(csvCell).join(',') : csvCell(r))).join('\n')}\n`;
-}
-
-function cellStr(v: unknown): string {
-  return v === null || v === undefined ? '' : String(v).trim();
-}
-
-function toRow(r: unknown): string[] {
-  return Array.isArray(r) ? r.map(cellStr) : [cellStr(r)];
-}
-
-function looksNumeric(s: string): boolean {
-  return s !== '' && !Number.isNaN(Number(s.replace(/\s/g, '').replace(',', '.')));
-}
-
-/** A header-like row has at least one label and no numeric (data) cells. */
-function isHeaderLike(row: string[]): boolean {
-  const nonEmpty = row.filter((c) => c !== '');
-  return nonEmpty.length > 0 && !nonEmpty.some(looksNumeric);
-}
-
-/**
- * Detect merged-group spans in row 0: a non-empty label at `start` followed by
- * ≥1 blank column that the sub-row labels (row1[i] non-empty). Returns the
- * columns to forward-fill the group label into. Empty when there is no group —
- * a label with only trailing/unlabeled blanks is NOT a merge.
- */
-function groupFillColumns(row0: string[], row1: string[]): number[] {
-  const fill: number[] = [];
-  for (let i = 0; i < row0.length; i++) {
-    if (row0[i] === '') continue;
-    let j = i + 1;
-    while (j < row0.length && row0[j] === '' && (row1[j] ?? '') !== '') {
-      fill.push(j);
-      j++;
-    }
-  }
-  return fill;
-}
-
-/**
- * Collapse a 2-row datastore header into one header row. data.egov.bg serves
- * spreadsheet exports whose merged header cells span two rows (a top group label
- * with gaps + a sub-label row). Merging is GATED on positive evidence to avoid
- * ever consuming a real data row: row1 must be header-like (no numerics), the
- * row AFTER it (row2) must be data-like (numeric — shape divergence), and row0
- * must contain a genuine merged group whose blank columns are sub-labeled by
- * row1. Otherwise row0 is used as a single-row header (no rows dropped).
- *
- * Known limitation: 3+ band headers and right-edge-only groups are not merged
- * (treated as single-row header); a pathological all-text data row immediately
- * before a numeric row under a sub-labeled group could still be misread, but the
- * row2-data-like gate eliminates the common cases.
- */
-export function flattenHeader(rows: unknown[]): { header: string[]; dataStart: number } {
-  if (rows.length === 0) return { header: [], dataStart: 0 };
-  const sample = rows.slice(0, 10).map(toRow);
-  const width = Math.max(1, ...sample.map((r) => r.length));
-  const pad = (r: string[]): string[] => {
-    const a = r.slice();
-    while (a.length < width) a.push('');
-    return a;
-  };
-  const row0 = pad(toRow(rows[0]));
-  const row1 = rows.length > 1 ? pad(toRow(rows[1])) : null;
-  const row2 = rows.length > 2 ? pad(toRow(rows[2])) : null;
-
-  const fillCols = row1 ? groupFillColumns(row0, row1) : [];
-  const merge =
-    row1 !== null &&
-    row2 !== null &&
-    isHeaderLike(row1) &&
-    !isHeaderLike(row2) && // the row after the sub-row must be data
-    fillCols.length > 0; // row0 has a genuine sub-labeled merged group
-
-  if (!merge || row1 === null) return { header: row0, dataStart: 1 };
-
-  const top = [...row0];
-  for (const c of fillCols) {
-    // fill from the nearest non-empty label to the left (the group's label)
-    for (let k = c - 1; k >= 0; k--) {
-      if (top[k] !== '') {
-        top[c] = top[k] as string;
-        break;
-      }
-    }
-  }
-  const header = top.map((t, i) => [t, row1[i] ?? ''].filter((x) => x !== '').join(' '));
-  return { header, dataStart: 2 };
 }
 
 function msg(e: unknown): string {
@@ -365,11 +267,16 @@ export async function runEgovSync(opts: EgovSyncOptions): Promise<EgovSyncResult
         sourceUrl: r.resource_url || `https://data.egov.bg/data/view/${d.uri}`,
         name: r.name ?? null,
       };
-      let data: unknown[] | Record<string, unknown> | string;
+      let rawBody: string;
       try {
-        // An absent `data` field — the live API returns `{"success":true}` for an empty
-        // datastore — normalizes to an empty array, captured below as a valid empty artifact.
-        data = (await opts.client.getResourceData(r.uri)).data ?? [];
+        // Capture the datastore response body VERBATIM (spec 049 FR-310): the exact bytes the
+        // portal sent, with NO envelope unwrap, defaulting, CSV conversion, header flattening, or
+        // re-serialization. Every content transform — array-of-arrays → CSV (incl. merged-header
+        // flattening), array-of-objects/document → JSON, plain-string → text, and normalizing an
+        // absent/`{}` data field to an empty artifact — moved into the datastore-JSON curator
+        // (`src/curate/datastore-json.ts`), so a curation-logic fix re-runs from raw without a
+        // re-crawl (FR-311/FR-315).
+        rawBody = await opts.client.getResourceData(r.uri);
       } catch (err) {
         log.warn('egov.capture.fail', { resource: r.uri, error: msg(err) });
         resourcesRepo.upsert({ ...baseResource, declaredFormat: formatHint });
@@ -396,49 +303,28 @@ export async function runEgovSync(opts: EgovSyncOptions): Promise<EgovSyncResult
         });
         continue;
       }
-      // An empty datastore (no rows, `{}`, or an absent `data` field) is a VALID empty
-      // resource, not a failure: it serializes to an empty artifact (`[]`/`{}`) below and is
-      // recorded as a successful capture. Counting it as a failure previously inflated the
-      // per-resource failure rate (~38% of a live sample) and tripped the SC-001 ≥95% SLO for
-      // a non-error condition.
-      // The serialized shape — not the portal's file_format — is authoritative for
-      // curator selection. Tabular datastore (array-of-arrays) → CSV; an array-of-objects
-      // or a single structured document (e.g. OCDS) → JSON; a plain-string datastore
-      // (a pre-formatted free-text/ASCII table) → TXT, written verbatim.
-      const ext =
-        typeof data === 'string'
-          ? 'txt'
-          : Array.isArray(data) && Array.isArray(data[0])
-            ? 'csv'
-            : 'json';
-      let content: string;
-      if (ext === 'txt') {
-        content = data as string;
-      } else if (ext === 'csv') {
-        const rows = data as unknown[];
-        const { header, dataStart } = flattenHeader(rows);
-        content = rowsToCsv([header, ...rows.slice(dataStart)]);
-      } else {
-        content = `${JSON.stringify(data, null, 2)}\n`;
-      }
-      const rawPath = join(safePathSegment(d.uri), safePathSegment(r.uri), `raw.${ext}`);
+      // The verbatim body is always the `getResourceData` JSON envelope (an empty datastore is a
+      // valid capture, not a failure — the curator normalizes an absent/`{}` data field to an empty
+      // artifact). It is written unchanged as `raw.json`; the recorded `EGOV_DATASTORE_FORMAT` hint
+      // routes it to the datastore-JSON curator (FR-312).
+      const rawPath = join(safePathSegment(d.uri), safePathSegment(r.uri), 'raw.json');
       const absPath = join(opts.storeRoot, 'raw', rawPath);
-      const buf = Buffer.from(content, 'utf-8');
+      const buf = Buffer.from(rawBody, 'utf-8');
       const sha256 = sha256Hex(buf);
       // FR-008 on-disk content reuse: if the file already holds these exact bytes (e.g. a safe
       // re-scan after a lost checkpoint), skip the re-write entirely (reuse-on-match, mirrors
       // BlobStore.put). Otherwise FR-005/SC-003: temp + fsync + rename, recording ONLY after rename.
       const onDiskMatches = existsSync(absPath) && sha256Hex(readFileSync(absPath)) === sha256;
       if (!onDiskMatches) {
-        atomicWriteFile(absPath, content);
+        atomicWriteFile(absPath, rawBody);
       }
-      resourcesRepo.upsert({ ...baseResource, declaredFormat: ext });
+      resourcesRepo.upsert({ ...baseResource, declaredFormat: EGOV_DATASTORE_FORMAT });
       resourcesRepo.recordCapture({
         id: r.uri,
         bytes: buf.byteLength,
         sha256,
         rawPath,
-        detectedFormat: ext,
+        detectedFormat: EGOV_DATASTORE_FORMAT,
         outcome: 'success',
       });
       checkpoint.markResourceSuccess({
@@ -464,7 +350,7 @@ export async function runEgovSync(opts: EgovSyncOptions): Promise<EgovSyncResult
         bytes: buf.byteLength,
         sha256,
         rawPath,
-        declaredFormat: ext,
+        declaredFormat: EGOV_DATASTORE_FORMAT,
       });
     }
 

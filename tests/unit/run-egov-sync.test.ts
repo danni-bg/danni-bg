@@ -26,7 +26,11 @@ function fakeClient(overrides: Partial<Record<string, () => unknown>> = {}): Ego
     listDatasets: async () => overrides.listDatasets?.() ?? { success: true, datasets: [] },
     getDatasetDetails: async () => overrides.getDatasetDetails?.() ?? fix('getDatasetDetails'),
     listResources: async () => overrides.listResources?.() ?? fix('listResources'),
-    getResourceData: async () => overrides.getResourceData?.() ?? fix('getResourceData'),
+    // getResourceData returns the VERBATIM body as a string (spec 049); serialize object overrides.
+    getResourceData: async () => {
+      const v = overrides.getResourceData ? overrides.getResourceData() : fix('getResourceData');
+      return typeof v === 'string' ? v : JSON.stringify(v);
+    },
     listOrganisations: async () => fix('listOrganisations'),
   } as unknown as EgovBgClient;
 }

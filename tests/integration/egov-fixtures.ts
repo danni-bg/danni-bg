@@ -123,7 +123,8 @@ export class FakeEgovCatalog {
           const r = d.resources.find((x) => x.uri === resourceUri);
           if (r) {
             if (r.fail) throw new Error(r.fail);
-            return { success: true, data: r.data };
+            // Verbatim response body (spec 049): capture stores these exact bytes as raw.json.
+            return JSON.stringify({ success: true, data: r.data });
           }
         }
         throw new Error(`getResourceData: unknown ${resourceUri}`);

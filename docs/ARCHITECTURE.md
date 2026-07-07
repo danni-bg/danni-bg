@@ -90,7 +90,7 @@ Pulls the portal into `store/raw/` and records metadata in SQLite. Two interchan
 All HTTP goes through `PortalHttp` (`http.ts`) with `RateLimiter`, `BackoffRunner`, and `RobotsCache`. Respectful by default; `crawler.robots.obey: false` / `allowHosts` is an operator opt-out for the official public API.
 
 - **CKAN path**: `discover` (package_search) → `packageShow` → `capture-resource` downloads each resource's bytes (conditional GET via etag/last-modified).
-- **egov-bg path**: `listDatasets` → `getDatasetDetails` → `listResources` → `getResourceData` (the portal's datastore returns rows; array-of-arrays → CSV, else JSON), captured into `store/raw/`.
+- **egov-bg path**: `listDatasets` → `getDatasetDetails` → `listResources` → `getResourceData`; the **verbatim** datastore response envelope is written to `store/raw/` as `raw.json` (byte-faithful, like the CKAN path — spec 049). No shape transform at capture: array-of-arrays → CSV, header flattening, and absent-data normalization all moved into curate. Captures carry the `egov-datastore` format hint so the registry routes them to the `DatastoreJsonCurator`.
 - **Resumable full crawl** (`crawl-checkpoint.ts`, `scope-hash.ts`, `egov-validator.ts`): a `crawl_checkpoint` keyed by scope-hash with a **frozen sorted dataset-id cursor** and per-resource completion + attempt counts; **atomic capture** (temp + fsync + rename); runs inside `beginSyncRun` (shared `sync_runs_lock`, mutually exclusive with the CKAN path); `--max` per-session batch and `--retry-failed` (max-attempts cap).
 
 **Writes:** `store/raw/<dataset>/<resource>/raw.*` + `datasets`, `resources`, `organizations`, `sync_runs` rows.
@@ -102,6 +102,7 @@ Normalizes raw bytes into typed, UTF-8 artifacts with a declared schema.
 ```
 CuratorRegistry.select(resource)  ── sniff(magic bytes + extension + declared format)
         │
+        ├─ DatastoreJsonCurator (egov-datastore hint: unwrap envelope → CSV/JSON/text; spec 049)
         ├─ CsvCurator   ├─ XlsxCurator   ├─ GeoJsonCurator   ├─ JsonCurator
         ├─ XmlCurator   ├─ TextCurator   └─ UncuratedMarker (fallback, raw retained)
         │                  └ dependency-free OOXML reader (ZIP central dir + node:zlib inflate)
@@ -437,7 +438,7 @@ the SPA account/chat UI under `apps/explorer-web/src/{auth,account,admin,chat}`.
 
 - **The semantic half is opt-in.** `local-onnx` (embedder) and `local-marianmt` (translator) ship as **deterministic placeholders** — the FTS/keyword half of search is always real, but real *semantic* vectors and EN translations need a real model wired via `provider: "hosted-api"` (see [semantic-search.md](./semantic-search.md)). The reference deployment points the embedder at a vLLM **Qwen3-Embedding-8B** (4096-dim) on the LAN and the chat at an OpenAI-compatible model; `batch-embed` makes a real-model re-index practical at corpus scale.
 - **The explorer needs `apps/explorer-api` running, and chat needs a provider + sign-in.** The web app reads the same store live (no rebuild to see new sync/curate/index results — just refresh). Chat is gated behind login and uses the **admin-configured** server-default provider (the old per-request user override was removed — spec 022); a provider without function-calling automatically uses the RAG fallback. The dev server is run non-hot (`--hot` EMFILE-chokes on the large `store/`), so a backend change needs a restart. To run unsandboxed for LAN access to the embedder/LLM, see the project memory + `specs/008-map-data-explorer/quickstart.md`.
-- **The live data.egov.bg crawl needs the egov adapter + a robots opt-out.** The portal does **not** serve the CKAN API at `/api/3/action/` (every method returns "Непознат метод"); use `portal.api: "egov-bg"` with `baseUrl: "https://data.egov.bg/api/"`. The site's `robots.txt` is `Disallow: /`, so an authorized crawl of its public API requires `crawler.robots.obey: false` (or `allowHosts: ["data.egov.bg"]`). The egov datastore serves resources as JSON rows, captured as CSV → curated as tabular.
+- **The live data.egov.bg crawl needs the egov adapter + a robots opt-out.** The portal does **not** serve the CKAN API at `/api/3/action/` (every method returns "Непознат метод"); use `portal.api: "egov-bg"` with `baseUrl: "https://data.egov.bg/api/"`. The site's `robots.txt` is `Disallow: /`, so an authorized crawl of its public API requires `crawler.robots.obey: false` (or `allowHosts: ["data.egov.bg"]`). The egov datastore serves resources as a JSON envelope, captured **verbatim** to `store/raw/` (byte-faithful on both adapters — spec 049); the `DatastoreJsonCurator` unwraps it to CSV/JSON/text at curate time, so a curation-logic fix (e.g. header flattening) re-runs from raw without a re-crawl.
 - **The store is the source of truth.** Any stage can be re-run; the raw archive remains usable read-only even if the portal is unreachable.
 
 ---

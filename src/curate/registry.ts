@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import { CsvCurator } from './csv.ts';
 import type { CurateContext, CuratedArtifactOutput, Curator } from './curator.ts';
+import { DatastoreJsonCurator } from './datastore-json.ts';
 import { GeoJsonCurator } from './geojson.ts';
 import { JsonCurator } from './json.ts';
 import { sniff } from './sniff.ts';
@@ -19,6 +20,11 @@ export class CuratorRegistry {
 
   constructor(opts: RegistryOptions = {}) {
     this.curators = [
+      // First: an egov datastore capture is a verbatim JSON envelope that sniffs as `json`. This
+      // gate-guarded curator claims only resources carrying the datastore hint (spec 049 FR-312),
+      // and being ahead of `JsonCurator` it wins the sniffed-`json` probe for those captures while
+      // a plain JSON resource falls through to `JsonCurator`.
+      new DatastoreJsonCurator(),
       new CsvCurator(),
       new XlsxCurator(),
       new GeoJsonCurator(),
