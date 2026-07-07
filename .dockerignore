@@ -8,3 +8,11 @@ store/
 *.log
 *.swp
 .DS_Store
+
+# Non-runtime trees (spec 044 FR-261) — excluded from the build context so they enter NEITHER the
+# build stage nor the shipped runtime layer. None is needed to install deps or build the SPA.
+specs/
+tests/
+eval/
+docs/
+**/*.test.ts

@@ -58,6 +58,10 @@ services:
       EXPLORER_DEFAULT_MODEL: ${EXPLORER_DEFAULT_MODEL:-}
       EXPLORER_DEFAULT_BASE_URL: ${EXPLORER_DEFAULT_BASE_URL:-}
       EXPLORER_DEFAULT_API_KEY: ${EXPLORER_DEFAULT_API_KEY:-}
+    # The app image runs NON-ROOT as uid:gid 10001:10001 (spec 044 FR-262). A FRESH named volume is
+    # created world-writable-by-owner and chowned on boot, so it just works. Upgrading a PRE-EXISTING
+    # root-era volume once: `docker run --rm -v danni_store:/data alpine chown -R 10001:10001 /data`
+    # (SC-4) — otherwise migrate-on-boot cannot write the SQLite store.
     volumes:
       - danni_store:/data
     depends_on:

@@ -130,6 +130,39 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Build once, load LOCALLY, and guard the image before publishing (spec 044 FR-264): a slim,
+      # non-root image is a release invariant, not a hope. The push step below reuses the gha cache.
+      - name: Build (load for the hardening guard)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: danni-app:guard
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 'Guard: minimal + non-root image (spec 044 FR-264)'
+        run: |
+          set -euo pipefail
+          IMG=danni-app:guard
+          # (b) effective UID must be non-zero (WORKDIR /app; --entrypoint overrides the boot script).
+          uid=$(docker run --rm --entrypoint sh "$IMG" -c 'id -u')
+          echo "image effective uid=$uid"
+          test "$uid" -ne 0
+          # (a) no dev/SPA-build toolchain under node_modules.
+          docker run --rm --entrypoint sh "$IMG" -c '! test -e node_modules/@playwright/test'
+          docker run --rm --entrypoint sh "$IMG" -c '! test -e node_modules/vite'
+          docker run --rm --entrypoint sh "$IMG" -c '! test -e node_modules/.bin/vite'
+          # (a) no non-runtime trees.
+          for tree in specs tests eval apps/explorer-web/src apps/explorer-web/e2e; do
+            docker run --rm --entrypoint sh "$IMG" -c "! test -e $tree"
+          done
+          # Positive control: the runtime essentials ARE present.
+          docker run --rm --entrypoint sh "$IMG" -c \
+            'test -f apps/explorer-api/src/server.ts && test -d apps/explorer-web/dist && test -d migrations && test -f scripts/docker-entrypoint.sh && test -d vendor'
+          echo "image size (bytes): $(docker image inspect "$IMG" --format '{{.Size}}')"
+
       - name: Build + push (linux/amd64 — matches the cx43/cx33 nodes)
         uses: docker/build-push-action@v6
         with:
