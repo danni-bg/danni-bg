@@ -8,6 +8,7 @@ import { Crosswalk } from '../../../packages/geo-boundaries/src/crosswalk.ts';
 import { loadCrosswalk } from '../../../packages/geo-boundaries/src/load.ts';
 import { loadConfig } from '../../../src/config/loader.ts';
 import { buildEmbedder } from '../../../src/index/embedders/factory.ts';
+import { isStale } from '../../../src/lib/time.ts';
 import { openDb } from '../../../src/store/db.ts';
 import { ApiKeyRepo } from '../../../src/store/repos/api-keys.ts';
 import { ApiUsageRepo } from '../../../src/store/repos/api-usage.ts';
@@ -37,11 +38,12 @@ export function buildHealth(
     .query<{ last: string | null }, []>('SELECT MAX(last_synced_at) AS last FROM datasets')
     .get();
   const lastSyncedAt = row?.last ?? null;
-  const ageMs = lastSyncedAt ? Date.parse(lastSyncedAt) : Number.NaN;
-  const isStale = !lastSyncedAt || (Date.now() - ageMs) / 1000 > sloSeconds;
+  // A never-synced store (null timestamp) is stale — the shared helper folds in the `!lastSyncedAt`
+  // short-circuit (FR-373).
+  const stale = isStale(lastSyncedAt, sloSeconds);
   // Resolved from settings (admin-configured) else the env seed — matches what the chat will use.
   const defaultProvider = resolveServerDefault(settings, process.env) ? 'configured' : 'absent';
-  return { lastSyncedAt, isStale, defaultProvider };
+  return { lastSyncedAt, isStale: stale, defaultProvider };
 }
 
 /** Seed the LLM default from EXPLORER_DEFAULT_* on first run; afterwards the settings store is authoritative. */

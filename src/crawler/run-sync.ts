@@ -2,13 +2,13 @@ import type { Database } from 'bun:sqlite';
 import type { DanniConfig } from '../config/schema.ts';
 import { nowIso } from '../lib/time.ts';
 import { withContext } from '../logging/logger.ts';
-import { LockContentionError, beginSyncRun, failureRate } from '../manifest/sync-run.ts';
+import { beginSyncRun, finalizeSyncRun, guardSyncRun } from '../manifest/sync-run.ts';
 import type {
   ManifestDatasetEntry,
   ManifestResourceEntry,
   ManifestTotals,
 } from '../manifest/writer.ts';
-import { type Notifier, dispatchAndPersist } from '../notify/notifier.ts';
+import type { Notifier } from '../notify/notifier.ts';
 import { BlobStore } from '../store/blob-store.ts';
 import type { RunTrigger } from '../store/repos/sync-runs.ts';
 import { captureDataset } from './capture-dataset.ts';
@@ -73,7 +73,7 @@ export async function runSync(opts: RunSyncOptions): Promise<RunSyncResult> {
   const datasetEntries: ManifestDatasetEntry[] = [];
   const observedDatasetIds = new Set<string>();
 
-  try {
+  return guardSyncRun(handle, async () => {
     for await (const summary of discoverDatasets({
       client: opts.client,
       scopePredicate,
@@ -222,42 +222,12 @@ export async function runSync(opts: RunSyncOptions): Promise<RunSyncResult> {
       handle.recordEvent({ datasetId: o.datasetId, outcome: 'out_of_scope' });
     }
 
-    const summaryOutcome: 'success' | 'partial' | 'failed' =
-      totals.failed === 0
-        ? 'success'
-        : totals.captured + totals.skippedUnchanged > 0
-          ? 'partial'
-          : 'failed';
-
-    const finalize = handle.end({ summaryOutcome, totals, datasetEntries });
-
-    if (opts.notifier) {
-      const rate = failureRate(totals);
-      if (summaryOutcome === 'failed') {
-        await dispatchAndPersist(
-          { db: opts.db, notifier: opts.notifier },
-          {
-            runId: handle.runId,
-            kind: 'run_failed',
-            summary: 'sync run failed',
-            totals: totals as unknown as Record<string, number>,
-            failureRate: rate,
-          },
-        );
-      } else if (rate > opts.config.schedule.failureRateThreshold) {
-        await dispatchAndPersist(
-          { db: opts.db, notifier: opts.notifier },
-          {
-            runId: handle.runId,
-            kind: 'threshold_exceeded',
-            summary: `failure rate ${rate.toFixed(3)} exceeded threshold ${opts.config.schedule.failureRateThreshold}`,
-            totals: totals as unknown as Record<string, number>,
-            failureRate: rate,
-            threshold: opts.config.schedule.failureRateThreshold,
-          },
-        );
-      }
-    }
+    const { summaryOutcome, manifestPath } = await finalizeSyncRun(handle, totals, datasetEntries, {
+      db: opts.db,
+      notifier: opts.notifier,
+      config: opts.config,
+      failedSummary: 'sync run failed',
+    });
 
     if (opts.onTouchedDatasets && observedDatasetIds.size > 0) {
       try {
@@ -274,13 +244,7 @@ export async function runSync(opts: RunSyncOptions): Promise<RunSyncResult> {
       runId: handle.runId,
       summaryOutcome,
       totals,
-      manifestPath: finalize.manifestPath,
+      manifestPath,
     };
-  } catch (err) {
-    if (err instanceof LockContentionError) {
-      throw err;
-    }
-    handle.abort(err instanceof Error ? err.message : String(err));
-    throw err;
-  }
+  });
 }

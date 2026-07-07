@@ -8,21 +8,20 @@
 // A human Kratos session passes every class; keys are gated per the matrix.
 
 import { Hono } from 'hono';
+import type { MiddlewareHandler } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
 import type { ApiKeyRepo } from '../../../../src/store/repos/api-keys.ts';
 import type { ApiUsageRepo } from '../../../../src/store/repos/api-usage.ts';
-import type { TenantsRepo } from '../../../../src/store/repos/tenants.ts';
 import type { TokenUsageRepo } from '../../../../src/store/repos/token-usage.ts';
 import type { UsersRepo } from '../../../../src/store/repos/users.ts';
-import type { SessionResolver } from '../auth/kratos-session.ts';
 import type { GenerationManager } from '../chat/generation-manager.ts';
 import { billableTokens, effectiveLimit, quotaView } from '../chat/quota.ts';
 import type { PersistentSessionStore } from '../chat/sessions-repo.ts';
+import { parseBody } from '../middleware/parse-body.ts';
 import {
   type AuthEnv,
   allowAnyKey,
-  requireAuth,
   requireHuman,
   requireScope,
 } from '../middleware/require-auth.ts';
@@ -51,17 +50,17 @@ const avatarBody = z.object({
 });
 
 export interface MeRoutesOpts {
+  /** The shared auth gate (spec 055 FR-375), composed once in app.ts. */
+  gate: MiddlewareHandler<AuthEnv>;
   // Resolved through the caller's active org (spec 042 FR-240): a per-tenant `defaultTokenLimit`
   // override applies to the user's own quota view, matching the chat gate's enforcement.
   defaultTokenLimit: (tenantId?: string) => number | undefined;
   cacheWeight: () => number | undefined;
-  sessionResolver?: SessionResolver | undefined;
   chatSessions?: PersistentSessionStore | undefined;
   generations?: GenerationManager | undefined;
   apiKeys?: ApiKeyRepo | undefined;
   apiUsage?: ApiUsageRepo | undefined;
   apiQuotaWindowSec?: (() => number) | undefined;
-  tenants?: TenantsRepo | undefined;
 }
 
 export function meRoutes(
@@ -70,7 +69,7 @@ export function meRoutes(
   opts: MeRoutesOpts,
 ): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();
-  app.use('*', requireAuth(users, opts.sessionResolver, opts.apiKeys, opts.tenants));
+  app.use('*', opts.gate);
 
   // API-key management (spec 027) — human-session-only (a key can't manage keys).
   const apiKeys = opts.apiKeys;
@@ -79,22 +78,14 @@ export function meRoutes(
       c.json({ keys: apiKeys.listForUser(c.get('user').id) }),
     );
     app.post('/api-keys', requireHuman, async (c) => {
-      let body: unknown;
-      try {
-        body = await c.req.json();
-      } catch {
-        return c.json({ error: { code: 'bad_request', message: 'invalid JSON body' } }, 400);
-      }
-      const parsed = createKeyBody.safeParse(body);
-      if (!parsed.success) {
-        return c.json({ error: { code: 'bad_request', message: 'invalid API key request' } }, 400);
-      }
+      const parsed = await parseBody(c, createKeyBody, { message: 'invalid API key request' });
+      if (parsed instanceof Response) return parsed;
       const created = apiKeys.create({
         userId: c.get('user').id,
         tenantId: c.get('tenant').id, // the key belongs to the caller's active org (spec 029)
-        name: parsed.data.name,
-        ...(parsed.data.scopes ? { scopes: parsed.data.scopes } : {}),
-        expiresAt: parsed.data.expiresAt ?? null,
+        name: parsed.name,
+        ...(parsed.scopes ? { scopes: parsed.scopes } : {}),
+        expiresAt: parsed.expiresAt ?? null,
       });
       // The plaintext secret is returned ONCE here and is never retrievable again.
       return c.json({ key: created.plaintext, ...created.view }, 201);
@@ -137,18 +128,10 @@ export function meRoutes(
   // Set or clear (null) the caller's profile picture. Human-only (spec 038 FR-201): a pure account
   // mutation with no machine use case — an API key (any scope) is refused.
   app.put('/avatar', requireHuman, async (c) => {
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: { code: 'bad_request', message: 'invalid JSON body' } }, 400);
-    }
-    const parsed = avatarBody.safeParse(body);
-    if (!parsed.success) {
-      return c.json({ error: { code: 'bad_request', message: 'invalid avatar' } }, 400);
-    }
-    users.setAvatar(c.get('user').id, parsed.data.avatarUrl);
-    return c.json({ avatarUrl: parsed.data.avatarUrl });
+    const parsed = await parseBody(c, avatarBody, { message: 'invalid avatar' });
+    if (parsed instanceof Response) return parsed;
+    users.setAvatar(c.get('user').id, parsed.avatarUrl);
+    return c.json({ avatarUrl: parsed.avatarUrl });
   });
 
   // Resumable chat history (only when a persistent store is wired). All scoped to the caller. Chat

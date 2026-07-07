@@ -1,4 +1,5 @@
 import type { Database } from 'bun:sqlite';
+import { isStale } from '../lib/time.ts';
 import { CuratedArtifactsRepo, type CuratedKind } from '../store/repos/curated-artifacts.ts';
 import { DatasetLinksRepo } from '../store/repos/dataset-links.ts';
 import { DatasetsRepo } from '../store/repos/datasets.ts';
@@ -98,10 +99,6 @@ export function datasetView(
   const org = dataset.publisher_id ? orgsRepo.get(dataset.publisher_id) : null;
   const artifacts = artifactsRepo.byDataset(datasetId);
   const resources = resourcesRepo.listByDataset(datasetId);
-  const isStale = (lastSyncedAt: string): boolean => {
-    const ms = Date.now() - new Date(lastSyncedAt).getTime();
-    return ms / 1000 > freshnessSloSeconds;
-  };
 
   return {
     datasetId: dataset.id,
@@ -129,7 +126,7 @@ export function datasetView(
       lastSyncedAt: dataset.last_synced_at,
       sourceLastModified: dataset.metadata_modified,
       sourceEtagOrHash: dataset.source_etag_or_hash,
-      isStale: isStale(dataset.last_synced_at),
+      isStale: isStale(dataset.last_synced_at, freshnessSloSeconds),
       freshnessSloSeconds,
     },
     resources: resources.map((r) => {
@@ -149,7 +146,7 @@ export function datasetView(
           lastSyncedAt: r.last_synced_at,
           sourceLastModified: r.last_modified,
           sourceEtagOrHash: r.etag,
-          isStale: isStale(r.last_synced_at),
+          isStale: isStale(r.last_synced_at, freshnessSloSeconds),
           freshnessSloSeconds,
         },
       };

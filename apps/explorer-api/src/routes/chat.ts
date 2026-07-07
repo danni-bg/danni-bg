@@ -24,6 +24,7 @@ import { type ConversationStore, MAX_CONTEXT_DATASETS, windowMessages } from '..
 import { chatSSE } from '../chat/sse-events.ts';
 import { expandGeoUnitIds } from '../geo-rollup.ts';
 import type { Metrics } from '../metrics.ts';
+import { parseBody } from '../middleware/parse-body.ts';
 import type { ReadBridge } from '../read-bridge.ts';
 import { scopeDescriptorSchema } from '../schemas.ts';
 import { Tracer } from '../trace.ts';
@@ -79,15 +80,11 @@ function quotaResetsAt(_user: UserRow): string | null {
 
 export function chatHandler(deps: ChatRouteDeps) {
   return async (c: Context): Promise<Response> => {
-    let body: z.infer<typeof chatRequestSchema>;
-    try {
-      body = chatRequestSchema.parse(await c.req.json());
-    } catch (e) {
-      return c.json(
-        { error: { code: 'bad_request', message: 'invalid chat request', details: String(e) } },
-        400,
-      );
-    }
+    const body = await parseBody(c, chatRequestSchema, {
+      message: 'invalid chat request',
+      details: 'string',
+    });
+    if (body instanceof Response) return body;
 
     // Enforce the per-user token quota up front (token metering): an over-quota user is rejected with
     // 429 before any model work. `user` is set by requireAuth; metering is skipped if no repo is wired.

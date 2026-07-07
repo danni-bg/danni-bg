@@ -1,4 +1,5 @@
 import type { Database } from 'bun:sqlite';
+import { isStale } from '../lib/time.ts';
 import { type CuratedArtifactRow, CuratedArtifactsRepo } from '../store/repos/curated-artifacts.ts';
 import { DatasetsRepo } from '../store/repos/datasets.ts';
 import { EntitiesRepo } from '../store/repos/entities.ts';
@@ -266,7 +267,7 @@ function projectEntry(
       lastSyncedAt: ds.last_synced_at,
       sourceLastModified: ds.metadata_modified,
       sourceEtagOrHash: ds.source_etag_or_hash,
-      isStale: (Date.now() - new Date(ds.last_synced_at).getTime()) / 1000 > ctx.sloSeconds,
+      isStale: isStale(ds.last_synced_at, ctx.sloSeconds),
       freshnessSloSeconds: ctx.sloSeconds,
     },
   };

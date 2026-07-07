@@ -269,5 +269,25 @@ capabilities each have their own spec:
   dataset uri) so placeholder rows are queryable, not silent (FR-364/365). No migration; 048/049/052
   preserved
 
+- 055 backend DRY consolidation: one shared implementation per repeated backend idiom (pure refactor,
+  behavior-preserving). `parseBody(c, schema, opts)` (`apps/explorer-api/src/middleware/parse-body.ts`)
+  replaces the copy-pasted `try{c.req.json()}catch→400` + `safeParse→400` block at all 8+ route sites
+  (me/admin/tenant/chat) — returns the typed value or a 400 `{error:{code,message}}`; per-site messages
+  + admin/tenant `details:'flatten'` + chat `details:'string'` stay expressible via opts (FR-370). The
+  sync-runner epilogue is shared: `finalizeSyncRun(handle, totals, entries, {db,notifier,config,
+  failedSummary})` owns the `summaryOutcome` ternary + `handle.end` + notifier dispatch, and
+  `guardSyncRun(handle, fn)` owns the `LockContentionError`-rethrow/abort tail — both in
+  `src/manifest/sync-run.ts` next to `beginSyncRun`; `run-sync.ts`/`run-egov-sync.ts` only parameterize
+  the summary string (FR-371/372). `isStale(lastSyncedAt, sloSeconds, now?)` in `src/lib/time.ts` is
+  the single staleness rule (strict `>`, nullish→stale, batch `now`) for `query.ts`/`dataset-view.ts`/
+  `read-bridge.ts`/`server.ts` (FR-373). `ServerDefault` (`chat/providers.ts`) is now DERIVED from the
+  canonical `llmSettingSchema` (`admin/settings-schema.ts`) — adding a provider `kind` is a one-line
+  enum edit, guarded by a type-level test (FR-374; `providerConfigSchema` was already removed by 035).
+  `authGate(deps)` composes `requireAuth` ONCE in `app.ts` and is handed to every gated router — fixing
+  the live `routes/auth.ts` divergence where an API key on `/api/auth/*` got a generic session 401
+  instead of key-aware handling (FR-375). The chat tool `pointer()` now derives from the shared
+  `viewToPointer` (a documented minimal pick, FR-376). Existing route/runner tests stay green; new
+  hermetic tests cover each helper (FR-377)
+
 Project constitution: `.specify/memory/constitution.md` (v1.1.1; the locked test runner is `bun:test`).
 <!-- SPECKIT END -->

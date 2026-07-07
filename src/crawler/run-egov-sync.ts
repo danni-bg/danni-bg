@@ -1,9 +1,9 @@
 import type { Database } from 'bun:sqlite';
 import type { DanniConfig, ScopeConfig } from '../config/schema.ts';
 import { withContext } from '../logging/logger.ts';
-import { LockContentionError, beginSyncRun, failureRate } from '../manifest/sync-run.ts';
+import { beginSyncRun, finalizeSyncRun, guardSyncRun } from '../manifest/sync-run.ts';
 import type { ManifestTotals } from '../manifest/writer.ts';
-import { type Notifier, dispatchAndPersist } from '../notify/notifier.ts';
+import type { Notifier } from '../notify/notifier.ts';
 import { CrawlCheckpointsRepo } from '../store/repos/crawl-checkpoints.ts';
 import { DatasetsRepo } from '../store/repos/datasets.ts';
 import { ResourcesRepo } from '../store/repos/resources.ts';
@@ -17,8 +17,9 @@ import { assertScopeSupported } from './scope.ts';
  * Orchestrator for the resumable egov crawl (FR-007, research.md R4) — mirrors `runSync`
  * (`run-sync.ts`). Acquires the single `sync_runs_lock` via `beginSyncRun` (egov & CKAN mutually
  * exclusive), builds/loads the campaign checkpoint, plans the per-session dataset batch, drives
- * `runEgovSync` with the handle, finalizes via `handle.end`/`handle.abort`, and dispatches the
- * notifier on failure/threshold. `LockContentionError` is re-thrown to the caller (CLI → exit 5).
+ * `runEgovSync` with the handle, then finalizes + dispatches the notifier via the shared
+ * `finalizeSyncRun` epilogue. The body is wrapped in `guardSyncRun`, which re-throws a
+ * `LockContentionError` to the caller (CLI → exit 5) and otherwise aborts the handle (spec 055).
  */
 
 export interface RunEgovSyncRunOptions {
@@ -92,7 +93,7 @@ export async function runEgovSyncRun(opts: RunEgovSyncRunOptions): Promise<RunEg
   const log = withContext({ run_id: handle.runId, component: 'run-egov-sync' });
   log.info('egov-sync.started', { trigger: opts.trigger });
 
-  try {
+  return guardSyncRun(handle, async () => {
     const campaign = await buildOrLoadCampaign({
       db: opts.db,
       client: opts.client,
@@ -143,46 +144,17 @@ export async function runEgovSyncRun(opts: RunEgovSyncRunOptions): Promise<RunEg
       completed = true;
     }
 
-    const summaryOutcome: 'success' | 'partial' | 'failed' =
-      result.totals.failed === 0
-        ? 'success'
-        : result.totals.captured + result.totals.skippedUnchanged > 0
-          ? 'partial'
-          : 'failed';
-
-    const finalize = handle.end({
-      summaryOutcome,
-      totals: result.totals,
-      datasetEntries: result.datasetEntries,
-    });
-
-    if (opts.notifier) {
-      const rate = failureRate(result.totals);
-      if (summaryOutcome === 'failed') {
-        await dispatchAndPersist(
-          { db: opts.db, notifier: opts.notifier },
-          {
-            runId: handle.runId,
-            kind: 'run_failed',
-            summary: 'egov sync run failed',
-            totals: result.totals as unknown as Record<string, number>,
-            failureRate: rate,
-          },
-        );
-      } else if (rate > opts.config.schedule.failureRateThreshold) {
-        await dispatchAndPersist(
-          { db: opts.db, notifier: opts.notifier },
-          {
-            runId: handle.runId,
-            kind: 'threshold_exceeded',
-            summary: `failure rate ${rate.toFixed(3)} exceeded threshold ${opts.config.schedule.failureRateThreshold}`,
-            totals: result.totals as unknown as Record<string, number>,
-            failureRate: rate,
-            threshold: opts.config.schedule.failureRateThreshold,
-          },
-        );
-      }
-    }
+    const { summaryOutcome, manifestPath } = await finalizeSyncRun(
+      handle,
+      result.totals,
+      result.datasetEntries,
+      {
+        db: opts.db,
+        notifier: opts.notifier,
+        config: opts.config,
+        failedSummary: 'egov sync run failed',
+      },
+    );
 
     log.info('egov-sync.ended', { summaryOutcome, completed, ...result.totals });
     return {
@@ -190,14 +162,8 @@ export async function runEgovSyncRun(opts: RunEgovSyncRunOptions): Promise<RunEg
       scopeHash,
       summaryOutcome,
       totals: result.totals,
-      manifestPath: finalize.manifestPath,
+      manifestPath,
       completed,
     };
-  } catch (err) {
-    if (err instanceof LockContentionError) {
-      throw err;
-    }
-    handle.abort(err instanceof Error ? err.message : String(err));
-    throw err;
-  }
+  });
 }
