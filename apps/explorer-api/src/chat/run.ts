@@ -327,11 +327,7 @@ export async function runRagTurn(opts: RunChatTurnOptions): Promise<ChatTurnResu
   for (const id of scope.datasetIds ?? []) add(resolve(id));
   const geoScoped = (scope.geoUnitIds?.length ?? 0) > 0;
   // Over-fetch under a geo-scope so in-region datasets that rank lower globally still surface.
-  for (const hit of await bridge.search(
-    query,
-    undefined,
-    geoScoped ? GEO_SCOPED_SEARCH_LIMIT : 12,
-  )) {
+  for (const hit of await bridge.search(query, geoScoped ? GEO_SCOPED_SEARCH_LIMIT : 12)) {
     add(resolve(hit.datasetId));
   }
   // Scope-aware backfill: ranked search under a geo-scope under-surfaces a small region's datasets, so

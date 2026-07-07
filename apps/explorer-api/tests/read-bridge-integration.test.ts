@@ -68,7 +68,7 @@ describe('ReadBridge live methods', () => {
   });
 
   it('search finds the dataset by keyword', async () => {
-    const hits = await bridge.search('Въздух', 'bg', 5);
+    const hits = await bridge.search('Въздух', 5);
     expect(hits.some((h) => h.datasetId === 'd1')).toBe(true);
   });
 

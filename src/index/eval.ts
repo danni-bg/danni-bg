@@ -68,7 +68,6 @@ export async function evaluateRecall(opts: EvaluateRecallOptions): Promise<Recal
       db: opts.db,
       embedder: opts.embedder,
       query: q.query,
-      lang: q.lang,
       limit,
       ...(opts.freshnessSloSeconds !== undefined
         ? { freshnessSloSeconds: opts.freshnessSloSeconds }

@@ -36,7 +36,7 @@ A read-only [Model Context Protocol](https://modelcontextprotocol.io) server ove
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `mirror_search` | `query` (string, bg/en), `lang?` (`bg`\|`en`\|`auto`), `limit?` (1–50, default 5) | Ranked `IndexEntry[]` — `datasetId`, `title` (bg/en), `publisher`, `matchKind`, `sourceUrl`, `curatedDatasetPath`, `freshness`. |
+| `mirror_search` | `query` (string, bg/en), `limit?` (1–50, default 5) | Ranked `IndexEntry[]` — `datasetId`, `title` (bg/en), `publisher`, `matchKind`, `sourceUrl`, `curatedDatasetPath`, `freshness`. |
 | `mirror_entity_search` | `entityId` (string), `limit?` (1–50, default 50) | Datasets linked to that entity, with the matched entity label. |
 | `mirror_info` | `datasetId` (string) | The full curated-dataset record: title/description (bg+en), publisher, resources (with `curatedPath` + schema), entities, cross-dataset links, freshness. |
 | `read_resource` | `datasetId`, `resourceId`, `limit?` (1–1000, default 100), `offset?`, `filters?` (object: EXACT column → case-insensitive substring), `sort?` (`{col, dir?}`, `dir` = `asc`\|`desc`, default `asc`) | The resource's curated content: paginated `rows` (tabular/NDJSON or JSON array), a single `document` (JSON/GeoJSON object), or `text` (XML/text). |
@@ -106,6 +106,25 @@ the human-facing front door, but the endpoints are a clean programmatic interfac
 | `GET /api/regions?level=oblast\|municipality` | Choropleth aggregates: a hierarchical roll-up where an oblast's count is the de-duplicated union of its own + its municipalities' datasets (municipality summaries carry `oblastEntityId`). |
 | `GET /api/national`, `GET /api/facets` | Non-georeferenced datasets; filter facets with in-scope counts. |
 | `POST /api/chat` | **SSE** grounded chat: streams tokens + validated `citations` + map `anchors`. |
+
+### Pagination
+
+Every list endpoint takes `limit` + `offset` and returns `total` alongside the page. `limit` is
+clamped to a per-endpoint hard cap (`/api/datasets`: default 50, cap 200; the self/admin lists
+`/api/me/sessions`, `/api/admin/usage`, `/api/admin/tenants`, `/api/admin/api-usage`: default 100,
+cap 200), so no endpoint ever returns an unbounded full-table dump. `offset` is clamped to `≥ 0`; an
+absent or invalid value falls back to the default. Page through by advancing `offset` until it
+reaches `total`.
+
+### Versioning & compatibility
+
+The API is served under `/api` with **no version prefix** — treat it as an implicit **v1**. The
+compatibility promise: changes under `/api` are **additive only** (new endpoints, new optional fields,
+new optional query params); a field or endpoint that exists will not change shape or be removed under
+`/api`. Any breaking change would be introduced under a new `/api/v2` prefix served alongside the
+existing one — so a client written against today's `/api` keeps working. (There is deliberately no
+`/api/v1` alias: introducing one would break every existing client, SPA, and MCP consumer for no
+functional gain.)
 
 All inputs are Zod-validated; responses are UTF-8 JSON (SSE for chat) with mandatory `freshness`
 blocks. The chat is grounded by construction: the focused/open dataset's real rows are injected as

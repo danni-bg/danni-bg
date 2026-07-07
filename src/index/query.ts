@@ -8,8 +8,6 @@ import { TranslationsRepo } from '../store/repos/translations.ts';
 import type { Embedder } from './embedder.ts';
 import { type VectorMatrix, getVectorMatrix } from './vector-cache.ts';
 
-export type Lang = 'bg' | 'en' | 'auto';
-
 export interface IndexEntry {
   datasetId: string;
   score: number;
@@ -50,7 +48,6 @@ export interface QueryOptions {
   db: Database;
   embedder: Embedder;
   query: string;
-  lang?: Lang;
   limit?: number;
   freshnessSloSeconds?: number;
 }

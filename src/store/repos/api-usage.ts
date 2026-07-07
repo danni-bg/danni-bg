@@ -120,16 +120,34 @@ export class ApiUsageRepo {
       .map((r) => ({ ...r, total: r.data + r.chat }));
   }
 
-  /** Per-principal totals since `sinceIso` (admin view), newest activity first. */
-  summaryAll(sinceIso: string): { principalId: string; data: number; chat: number; total: number }[] {
+  /**
+   * Per-principal totals since `sinceIso` (admin view), busiest first — bounded + pageable (spec 056
+   * FR-392).
+   */
+  summaryAll(
+    sinceIso: string,
+    limit = 100,
+    offset = 0,
+  ): { principalId: string; data: number; chat: number; total: number }[] {
     return this.db
-      .query<{ principalId: string; data: number; chat: number }, [string]>(
+      .query<{ principalId: string; data: number; chat: number }, [string, number, number]>(
         `SELECT principal_id AS principalId,
                 SUM(route_class = 'data') AS data,
                 SUM(route_class = 'chat') AS chat
-         FROM api_usage WHERE created_at >= ? GROUP BY principal_id ORDER BY COUNT(*) DESC`,
+         FROM api_usage WHERE created_at >= ? GROUP BY principal_id ORDER BY COUNT(*) DESC
+         LIMIT ? OFFSET ?`,
       )
-      .all(sinceIso)
+      .all(sinceIso, limit, offset)
       .map((r) => ({ ...r, total: r.data + r.chat }));
+  }
+
+  /** Distinct active principals since `sinceIso` (drives the admin `/api-usage` `total`, FR-392). */
+  countPrincipalsSince(sinceIso: string): number {
+    const row = this.db
+      .query<{ n: number }, [string]>(
+        'SELECT COUNT(DISTINCT principal_id) AS n FROM api_usage WHERE created_at >= ?',
+      )
+      .get(sinceIso);
+    return row?.n ?? 0;
   }
 }

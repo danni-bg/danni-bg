@@ -5,6 +5,7 @@ import {
   DanniError,
   EmbedderHttpError,
   MigrationError,
+  PortalApiError,
   RetryExhausted,
 } from '../../../src/lib/errors.ts';
 
@@ -41,11 +42,22 @@ describe('errors specializations', () => {
     expect(e.name).toBe('ConfigError');
   });
 
-  it('CkanApiError carries httpStatus', () => {
-    const e = new CkanApiError('bad', 503, { x: 1 });
+  it('PortalApiError carries httpStatus and PORTAL_API_ERROR code (spec 056 FR-390)', () => {
+    const e = new PortalApiError('bad', 503, { x: 1 });
+    expect(e).toBeInstanceOf(DanniError);
+    expect(e.name).toBe('PortalApiError');
+    expect(e.code).toBe('PORTAL_API_ERROR');
     expect(e.httpStatus).toBe(503);
     expect(e.details['httpStatus']).toBe(503);
     expect(e.details['x']).toBe(1);
+  });
+
+  it('deprecated CkanApiError alias resolves to PortalApiError (spec 056 FR-390)', () => {
+    // Kept one release for external importers; a value thrown as CkanApiError is a PortalApiError.
+    expect(CkanApiError).toBe(PortalApiError);
+    const e = new CkanApiError('bad', 500);
+    expect(e).toBeInstanceOf(PortalApiError);
+    expect(e.code).toBe('PORTAL_API_ERROR');
   });
 
   it('EmbedderHttpError carries httpStatus (spec 054 FR-362)', () => {

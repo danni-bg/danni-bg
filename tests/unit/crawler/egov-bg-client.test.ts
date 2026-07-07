@@ -7,7 +7,7 @@ import { EgovBgClient } from '../../../src/crawler/egov-bg-client.ts';
 import { PortalHttp } from '../../../src/crawler/http.ts';
 import { RateLimiter } from '../../../src/crawler/rate-limit.ts';
 import { RobotsCache } from '../../../src/crawler/robots.ts';
-import { CkanApiError } from '../../../src/lib/errors.ts';
+import { PortalApiError } from '../../../src/lib/errors.ts';
 
 const FIX = fileURLToPath(new URL('../../fixtures/egov/', import.meta.url));
 const fixture = (name: string): string => readFileSync(join(FIX, `${name}.json`), 'utf-8');
@@ -132,20 +132,20 @@ describe('crawler.egov-bg-client', () => {
   });
 
   it('treats success:false as an error even when error/errors have a non-standard shape', async () => {
-    // errors as array, error as string — must still be a CkanApiError, not a
+    // errors as array, error as string — must still be a PortalApiError, not a
     // misleading "schema violation".
     const client = makeClient(() => ({
       json: { success: false, errors: ['criteria required'], error: 'Invalid api_key' },
     }));
     const err = await client.listDatasets().catch((e) => e);
-    expect(err).toBeInstanceOf(CkanApiError);
+    expect(err).toBeInstanceOf(PortalApiError);
     expect(err.message).toBe('egov-bg listDatasets failed: Invalid api_key ["criteria required"]');
   });
 
   it('carries action + falls back to error.type, then to "error"', async () => {
     const typed = makeClient(() => ({ json: { success: false, error: { type: 'NotFound' } } }));
     const e1 = await typed.getDatasetDetails('x').catch((e) => e);
-    expect(e1).toBeInstanceOf(CkanApiError);
+    expect(e1).toBeInstanceOf(PortalApiError);
     expect(e1.message).toBe('egov-bg getDatasetDetails failed: NotFound');
     expect((e1.details as { action?: string }).action).toBe('getDatasetDetails');
 
@@ -156,7 +156,7 @@ describe('crawler.egov-bg-client', () => {
   it('throws a schema violation (success:true but missing required field) with mapped issues', async () => {
     const client = makeClient(() => ({ json: { success: true, datasets: [{ name: 'no-uri' }] } }));
     const err = await client.listDatasets().catch((e) => e);
-    expect(err).toBeInstanceOf(CkanApiError);
+    expect(err).toBeInstanceOf(PortalApiError);
     expect(err.message).toBe('egov-bg listDatasets schema violation');
     const d = err.details as { action?: string; issues?: Array<{ path: string }> };
     expect(d.action).toBe('listDatasets');

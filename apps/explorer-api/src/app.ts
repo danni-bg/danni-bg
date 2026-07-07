@@ -35,6 +35,7 @@ import { RateLimiter } from './middleware/rate-limiter.ts';
 import { requestId } from './middleware/request-id.ts';
 import { requestLog } from './middleware/request-log.ts';
 import { authGate, requireScope } from './middleware/require-auth.ts';
+import { clampInt } from './pagination.ts';
 import type { ReadBridge } from './read-bridge.ts';
 import type { ReadinessReport } from './readiness.ts';
 import { aggregateRegions } from './regions-aggregate.ts';
@@ -128,12 +129,6 @@ function parseFilters(q: URLSearchParams): FilterState {
   });
 }
 
-function clampInt(raw: string | null, def: number, max: number): number {
-  const n = raw === null ? def : Number.parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 0) return def;
-  return Math.min(n, max);
-}
-
 export function createApp(ctx: AppContext): Hono {
   const app = new Hono();
 
@@ -169,6 +164,10 @@ export function createApp(ctx: AppContext): Hono {
     resolveToggles(tenantId)?.defaultTokenLimit;
   const resolveCacheWeight = (): number | undefined => resolveToggles()?.cachedTokenWeight;
   const resolveMaxOutputTokens = (): number | undefined => resolveToggles()?.maxOutputTokens;
+  // Chat kill-switch (spec 056 FR-386): resolved per request through the active org (tenant→global
+  // fallback). An unset toggle stays enabled — chat is on by default.
+  const resolveChatEnabled = (tenantId?: string): boolean =>
+    resolveToggles(tenantId)?.chatEnabled ?? true;
 
   // API metering (spec 028): rate limits + the data-API request quota + per-request usage. Defaults
   // are admin-overridable via toggles. The limiter is in-process (single-node; multi-node needs a
@@ -238,26 +237,28 @@ export function createApp(ctx: AppContext): Hono {
       defaultTokenLimit: resolveDefaultTokenLimit,
       cacheWeight: resolveCacheWeight,
       maxOutputTokens: resolveMaxOutputTokens,
+      chatEnabled: resolveChatEnabled,
       ...(ctx.metrics ? { metrics: ctx.metrics } : {}),
     }),
   );
 
-  // Per-user self view of token usage/quota (token metering) — any signed-in user.
-  if (ctx.tokenUsage) {
-    app.route(
-      '/api/me',
-      meRoutes(ctx.users, ctx.tokenUsage, {
-        gate,
-        defaultTokenLimit: resolveDefaultTokenLimit,
-        cacheWeight: resolveCacheWeight,
-        chatSessions: ctx.chatSessions,
-        generations,
-        apiKeys: ctx.apiKeys,
-        apiUsage: ctx.apiUsage,
-        apiQuotaWindowSec: meterConfig.quotaWindowSec,
-      }),
-    );
-  }
+  // Per-user self endpoints (spec 056 FR-393): mounted UNCONDITIONALLY — API-key management, chat
+  // sessions, generation resume, and avatar do not depend on token metering being wired. `/usage`
+  // itself degrades to a clear "metering not configured" response when no usage repo is present.
+  app.route(
+    '/api/me',
+    meRoutes(ctx.users, {
+      gate,
+      ...(ctx.tokenUsage ? { tokenUsage: ctx.tokenUsage } : {}),
+      defaultTokenLimit: resolveDefaultTokenLimit,
+      cacheWeight: resolveCacheWeight,
+      chatSessions: ctx.chatSessions,
+      generations,
+      apiKeys: ctx.apiKeys,
+      apiUsage: ctx.apiUsage,
+      apiQuotaWindowSec: meterConfig.quotaWindowSec,
+    }),
+  );
 
   // Backend auth endpoints (find-or-create app user + tier; logout URL). Self-service login/register
   // are Kratos flows driven by the SPA via the /kratos proxy.

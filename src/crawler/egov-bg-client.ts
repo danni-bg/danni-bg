@@ -1,5 +1,5 @@
 import { ZodError, type ZodTypeAny, type z } from 'zod';
-import { CkanApiError } from '../lib/errors.ts';
+import { PortalApiError } from '../lib/errors.ts';
 import {
   DatasetDetailsResponseSchema,
   EgovErrorEnvelopeSchema,
@@ -51,7 +51,7 @@ export class EgovBgClient {
       return schema.parse(res.body);
     } catch (e) {
       if (e instanceof ZodError) {
-        throw new CkanApiError(`egov-bg ${method} schema violation`, res.status, {
+        throw new PortalApiError(`egov-bg ${method} schema violation`, res.status, {
           action: method,
           issues: e.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
         });
@@ -60,12 +60,12 @@ export class EgovBgClient {
     }
   }
 
-  /** Build the `CkanApiError` for a `{success:false}` envelope (shared by `call` + `getResourceData`). */
+  /** Build the `PortalApiError` for a `{success:false}` envelope (shared by `call` + `getResourceData`). */
   private errorFromEnvelope(
     method: string,
     status: number,
     data: z.infer<typeof EgovErrorEnvelopeSchema>,
-  ): CkanApiError {
+  ): PortalApiError {
     const errObj = data.error;
     const type =
       errObj && typeof errObj === 'object' && 'type' in errObj
@@ -74,7 +74,7 @@ export class EgovBgClient {
           ? errObj
           : 'error';
     const fieldErrors = data.errors ? ` ${JSON.stringify(data.errors)}` : '';
-    return new CkanApiError(`egov-bg ${method} failed: ${type}${fieldErrors}`, status, {
+    return new PortalApiError(`egov-bg ${method} failed: ${type}${fieldErrors}`, status, {
       action: method,
     });
   }
@@ -124,7 +124,7 @@ export class EgovBgClient {
     try {
       parsed = JSON.parse(res.text);
     } catch {
-      throw new CkanApiError(
+      throw new PortalApiError(
         `egov-bg getResourceData returned non-JSON (status ${res.status}): ${res.text.slice(0, 200)}`,
         res.status,
         { action: 'getResourceData' },

@@ -21,14 +21,22 @@ export class ConfigError extends DanniError {
   }
 }
 
-export class CkanApiError extends DanniError {
-  override readonly name: string = 'CkanApiError';
+export class PortalApiError extends DanniError {
+  override readonly name: string = 'PortalApiError';
   readonly httpStatus: number;
   constructor(message: string, httpStatus: number, details: Record<string, unknown> = {}) {
-    super('CKAN_API_ERROR', message, { ...details, httpStatus });
+    super('PORTAL_API_ERROR', message, { ...details, httpStatus });
     this.httpStatus = httpStatus;
   }
 }
+
+/**
+ * @deprecated Renamed to {@link PortalApiError} (spec 056 FR-390) — the error is thrown by every
+ * portal client (CKAN and the non-CKAN egov-bg API), not just CKAN. Kept as an alias for one release
+ * so any external importer (this repo is published EUPL open-core) keeps compiling; remove thereafter.
+ */
+export const CkanApiError = PortalApiError;
+export type CkanApiError = PortalApiError;
 
 export class EmbedderHttpError extends DanniError {
   override readonly name: string = 'EmbedderHttpError';

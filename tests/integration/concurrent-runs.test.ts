@@ -34,19 +34,6 @@ describe('integration.concurrent-runs', () => {
     ).toThrow(LockContentionError);
   });
 
-  it('with onOverlap=queue a contended begin still surfaces LockContentionError so the caller can retry', () => {
-    new SyncRunsLockRepo(db).tryAcquire('held-by-another');
-    expect(() =>
-      beginSyncRun({
-        db,
-        storeRoot,
-        trigger: 'manual',
-        scopeFilter: {},
-        onOverlap: 'queue',
-      }),
-    ).toThrow(LockContentionError);
-  });
-
   it('after a clean release the next begin succeeds', () => {
     const lock = new SyncRunsLockRepo(db);
     lock.tryAcquire('previous');

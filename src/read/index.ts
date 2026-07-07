@@ -6,10 +6,4 @@ export {
   type ResourceContent,
   readResourceRows,
 } from './resource-rows.ts';
-export {
-  type IndexEntry,
-  type Lang,
-  type QueryOptions,
-  search,
-  searchByEntity,
-} from '../index/query.ts';
+export { type IndexEntry, type QueryOptions, search, searchByEntity } from '../index/query.ts';

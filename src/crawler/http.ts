@@ -1,7 +1,7 @@
 import { createWriteStream } from 'node:fs';
 import { rmSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { CkanApiError } from '../lib/errors.ts';
+import { PortalApiError } from '../lib/errors.ts';
 import { ensureDir, tempPath } from '../lib/fs.ts';
 import { Sha256Stream } from '../lib/hash.ts';
 import type { BackoffRunner } from './backoff.ts';
@@ -141,7 +141,7 @@ export class PortalHttp {
       return { status, body: JSON.parse(text) as T, headers };
     } catch {
       const ct = headers.get('content-type') ?? 'unknown';
-      throw new CkanApiError(
+      throw new PortalApiError(
         `POST ${url} returned non-JSON (status ${status}, content-type ${ct}): ${text.slice(0, 200)}`,
         status,
         { contentType: ct },

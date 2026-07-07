@@ -64,6 +64,10 @@ export interface ChatRouteDeps {
   cacheWeight?: () => number | undefined;
   /** Resolve the max output tokens per answer; undefined = built-in default. */
   maxOutputTokens?: () => number | undefined;
+  /** Kill-switch (spec 056 FR-386): resolve whether chat is enabled per request, through the caller's
+   * active org (spec 042 tenant→global fallback). Returns `false` → the route refuses with 503
+   * `chat_disabled` before any model/quota work. Undefined (unwired) or an unset toggle = enabled. */
+  chatEnabled?: (tenantId?: string) => boolean;
   /** Telemetry registry (spec 032): chat outcome + LLM tokens/cost are recorded when wired. */
   metrics?: Metrics;
 }
@@ -91,6 +95,15 @@ export function chatHandler(deps: ChatRouteDeps) {
     const user = c.get('user') as UserRow | undefined;
     // Active org (spec 029): session + usage are attributed to the caller's tenant.
     const tenantId = (c.get('tenant') as { id: string } | undefined)?.id;
+    // Kill-switch (spec 056 FR-386): when the resolved toggle is false, refuse BEFORE any model or
+    // quota work. Read per request so flipping the admin toggle takes effect without a restart; an
+    // unset toggle (or no resolver wired) stays enabled.
+    if (deps.chatEnabled && !deps.chatEnabled(tenantId)) {
+      return c.json(
+        { error: { code: 'chat_disabled', message: 'chat is currently disabled' } },
+        503,
+      );
+    }
     // Telemetry (spec 032): correlate this turn's spans/logs by request id; the metrics registry
     // records the outcome + LLM tokens/cost below.
     const requestId = c.get('requestId') as string | undefined;

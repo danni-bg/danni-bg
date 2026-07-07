@@ -102,8 +102,17 @@ export class TokenUsageRepo {
     };
   }
 
-  /** Per-user overview for admins: every user with their tier, effective-limit override, and usage. */
-  summaryByUser(): UserUsageRow[] {
+  /** Total users (drives the admin `/usage` `total`, spec 056 FR-392). */
+  countUsers(): number {
+    const row = this.db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM users').get();
+    return row?.n ?? 0;
+  }
+
+  /**
+   * Per-user overview for admins: every user with their tier, effective-limit override, and usage —
+   * bounded + pageable (spec 056 FR-392), highest usage first.
+   */
+  summaryByUser(limit = 100, offset = 0): UserUsageRow[] {
     return this.db
       .query<
         {
@@ -120,7 +129,7 @@ export class TokenUsageRepo {
           requests: number;
           last_used: string | null;
         },
-        []
+        [number, number]
       >(
         `SELECT u.id AS user_id, u.email, u.display_name, u.role, u.token_limit, u.usage_reset_at AS reset_at,
                 COALESCE(SUM(t.total_tokens), 0) AS used,
@@ -133,9 +142,10 @@ export class TokenUsageRepo {
          LEFT JOIN token_usage t
            ON t.user_id = u.id AND t.created_at >= COALESCE(u.usage_reset_at, '')
          GROUP BY u.id
-         ORDER BY used DESC, u.email ASC`,
+         ORDER BY used DESC, u.email ASC
+         LIMIT ? OFFSET ?`,
       )
-      .all()
+      .all(limit, offset)
       .map((r) => ({
         userId: r.user_id,
         email: r.email,

@@ -307,5 +307,26 @@ capabilities each have their own spec:
   `viewToPointer` (a documented minimal pick, FR-376). Existing route/runner tests stay green; new
   hermetic tests cover each helper (FR-377)
 
+- 056 backend surface cleanup (wire-or-delete; the final remediation spec — no dead or inconsistent
+  backend affordances). DELETED end-to-end: the never-read `lang` search option (`query.ts` +
+  `Lang` type, MCP `mirror_search` schema, `ReadBridge.search`, chat `mirrorSearch` tool — FR-385);
+  the duplicate `freshnessSloSeconds` toggle (`config.store.freshnessSloSeconds` is the sole owner —
+  FR-387); `schedule.timezone` (cron fires in **server-local time**; strict schema fails loud on a
+  config still carrying it — FR-388); `onOverlap: 'queue'` (was indistinguishable from `'skip'`; enum
+  is now `['skip']`, `sync-run.ts` keeps the single `LockContentionError` throw, `Scheduler` drops its
+  queue branch — FR-389); dead exports `upsertEmbeddingFor` (`index/vec.ts`) + `vecVersion`
+  (`store/db.ts`) — FR-391. WIRED: `chatEnabled` is a real kill-switch — `POST /api/chat` refuses with
+  a typed 503 `chat_disabled` before any model/quota work, resolved per request (tenant→global) so the
+  admin toggle takes effect without a restart (FR-386). `CkanApiError` → **`PortalApiError`**
+  (`PORTAL_API_ERROR`; thrown by every portal client, not just CKAN) with a deprecated
+  `CkanApiError = PortalApiError` alias kept one release (FR-390). Pagination: `/api/me/sessions` +
+  admin `/usage`/`/tenants`/`/api-usage` now take `limit`/`offset` (shared
+  `apps/explorer-api/src/pagination.ts`, default 100 cap 200) and return `total` — no unbounded
+  full-table lists; repos grew bounded variants + counts (FR-392). `/api/me` mounts UNCONDITIONALLY —
+  `meRoutes(users, opts)` takes `tokenUsage` as optional, so keys/sessions/generations/avatar work with
+  no metering wired and `/usage` returns a clear 501 `metering_unconfigured` when absent (FR-393). API
+  versioning decided: `/api` is **v1-implicit** (no `/v1` prefix); the additive-only compatibility
+  promise is documented in `docs/CONSUMERS.md` (FR-394)
+
 Project constitution: `.specify/memory/constitution.md` (v1.1.1; the locked test runner is `bun:test`).
 <!-- SPECKIT END -->

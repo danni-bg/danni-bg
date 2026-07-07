@@ -124,7 +124,7 @@ describe('crawler.ckan-client', () => {
     expect(out.success).toBe(true);
   });
 
-  it('throws CkanApiError on error envelope', async () => {
+  it('throws PortalApiError on error envelope', async () => {
     const badClient = makeClient(
       makeFetcher({
         package_show: () =>
@@ -140,7 +140,7 @@ describe('crawler.ckan-client', () => {
     await expect(badClient.packageShow('missing')).rejects.toThrow();
   });
 
-  it('throws CkanApiError on schema violation', async () => {
+  it('throws PortalApiError on schema violation', async () => {
     const badClient = makeClient(
       makeFetcher({
         package_show: () =>

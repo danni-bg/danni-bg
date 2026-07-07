@@ -5,7 +5,7 @@
 import type { Database } from 'bun:sqlite';
 import { ENTITY_PREDICATES } from '../../../src/enrich/relations/vocabulary.ts';
 import type { Embedder } from '../../../src/index/embedder.ts';
-import type { IndexEntry, Lang, RankedHit } from '../../../src/index/query.ts';
+import type { IndexEntry, RankedHit } from '../../../src/index/query.ts';
 import { search, searchByEntity, searchRanked } from '../../../src/index/query.ts';
 import { isStale } from '../../../src/lib/time.ts';
 import type { CuratedDatasetView } from '../../../src/read/dataset-view.ts';
@@ -310,13 +310,12 @@ export class ReadBridge {
     });
   }
 
-  search(query: string, lang?: Lang, limit?: number): Promise<IndexEntry[]> {
+  search(query: string, limit?: number): Promise<IndexEntry[]> {
     return search({
       db: this.deps.db,
       embedder: this.deps.embedder,
       query,
       freshnessSloSeconds: this.deps.freshnessSloSeconds,
-      ...(lang !== undefined ? { lang } : {}),
       ...(limit !== undefined ? { limit } : {}),
     });
   }

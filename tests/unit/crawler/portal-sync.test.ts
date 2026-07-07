@@ -37,7 +37,6 @@ function makeConfig(api: 'ckan' | 'egov-bg', storeRoot: string): DanniConfig {
     schedule: {
       enabled: false,
       cron: null,
-      timezone: 'Europe/Sofia',
       onOverlap: 'skip',
       failureRateThreshold: 1,
       notifier: { kind: 'stderr' },

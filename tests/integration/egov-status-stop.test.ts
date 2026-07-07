@@ -20,7 +20,6 @@ function testConfig(): DanniConfig {
       onOverlap: 'skip',
       failureRateThreshold: 1,
       enabled: false,
-      timezone: 'Europe/Sofia',
       notifier: { kind: 'stderr' },
     },
     scope: {},

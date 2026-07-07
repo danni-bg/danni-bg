@@ -25,6 +25,7 @@ import {
   requireHuman,
   requireScope,
 } from '../middleware/require-auth.ts';
+import { LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT, pageParams } from '../pagination.ts';
 import { streamGeneration } from './chat.ts';
 
 // API-key management (spec 027). Keys are created/listed/revoked by a HUMAN session only (a key can
@@ -52,6 +53,10 @@ const avatarBody = z.object({
 export interface MeRoutesOpts {
   /** The shared auth gate (spec 055 FR-375), composed once in app.ts. */
   gate: MiddlewareHandler<AuthEnv>;
+  /** Per-user token metering (spec 056 FR-393): OPTIONAL — the mount no longer depends on it. When
+   * absent, `/usage` returns a clear "metering not configured" response; every other `/api/me`
+   * surface (keys, sessions, generations, avatar) works regardless. */
+  tokenUsage?: TokenUsageRepo | undefined;
   // Resolved through the caller's active org (spec 042 FR-240): a per-tenant `defaultTokenLimit`
   // override applies to the user's own quota view, matching the chat gate's enforcement.
   defaultTokenLimit: (tenantId?: string) => number | undefined;
@@ -63,13 +68,10 @@ export interface MeRoutesOpts {
   apiQuotaWindowSec?: (() => number) | undefined;
 }
 
-export function meRoutes(
-  users: UsersRepo,
-  tokenUsage: TokenUsageRepo,
-  opts: MeRoutesOpts,
-): Hono<AuthEnv> {
+export function meRoutes(users: UsersRepo, opts: MeRoutesOpts): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();
   app.use('*', opts.gate);
+  const tokenUsage = opts.tokenUsage;
 
   // API-key management (spec 027) — human-session-only (a key can't manage keys).
   const apiKeys = opts.apiKeys;
@@ -110,7 +112,14 @@ export function meRoutes(
   }
 
   // Any-key (spec 038 FR-203): self-introspection of token quota so a machine client can throttle itself.
+  // Metering is optional (spec 056 FR-393): without a usage repo, say so clearly instead of 500ing.
   app.get('/usage', allowAnyKey, (c) => {
+    if (!tokenUsage) {
+      return c.json(
+        { error: { code: 'metering_unconfigured', message: 'token metering is not configured' } },
+        501,
+      );
+    }
     const user = c.get('user');
     const u = tokenUsage.usageForUser(user.id, user.usage_reset_at);
     const limit = effectiveLimit(user.token_limit, opts.defaultTokenLimit(c.get('tenant').id));
@@ -140,9 +149,20 @@ export function meRoutes(
   const sessions = opts.chatSessions;
   const chatScope = requireScope('chat');
   if (sessions) {
-    app.get('/sessions', chatScope, (c) =>
-      c.json({ sessions: sessions.listForUser(c.get('user').id) }),
-    );
+    app.get('/sessions', chatScope, (c) => {
+      const userId = c.get('user').id;
+      const { limit, offset } = pageParams(
+        new URL(c.req.url).searchParams,
+        LIST_DEFAULT_LIMIT,
+        LIST_MAX_LIMIT,
+      );
+      return c.json({
+        sessions: sessions.listForUser(userId, limit, offset),
+        total: sessions.countForUser(userId),
+        limit,
+        offset,
+      });
+    });
 
     app.get('/sessions/:id', chatScope, (c) => {
       const id = c.req.param('id');

@@ -135,14 +135,22 @@ export class PersistentSessionStore implements ConversationStore {
       .run(JSON.stringify(datasetIds), nowIso(), sessionId);
   }
 
-  /** Recent conversations for the user, newest first. */
-  listForUser(userId: string, limit = 100): SessionSummary[] {
+  /** Recent conversations for the user, newest first — bounded + pageable (spec 056 FR-392). */
+  listForUser(userId: string, limit = 100, offset = 0): SessionSummary[] {
     return this.db
-      .query<{ id: string; title: string | null; updated_at: string }, [string, number]>(
-        'SELECT id, title, updated_at FROM chat_sessions WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?',
+      .query<{ id: string; title: string | null; updated_at: string }, [string, number, number]>(
+        'SELECT id, title, updated_at FROM chat_sessions WHERE user_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?',
       )
-      .all(userId, limit)
+      .all(userId, limit, offset)
       .map((r) => ({ id: r.id, title: r.title, updatedAt: r.updated_at }));
+  }
+
+  /** Total conversations the user owns (drives the `/api/me/sessions` `total`, spec 056 FR-392). */
+  countForUser(userId: string): number {
+    const row = this.db
+      .query<{ n: number }, [string]>('SELECT COUNT(*) AS n FROM chat_sessions WHERE user_id = ?')
+      .get(userId);
+    return row?.n ?? 0;
   }
 
   /** Full conversation (with citations/anchors) if it belongs to the user, else null. */

@@ -56,10 +56,9 @@ export function buildTools(bridge: ReadBridge, scope: ScopeDescriptor): BuildToo
         'Hybrid keyword + semantic search over the curated mirror. Returns in-scope datasets.',
       inputSchema: z.object({
         query: z.string().min(1),
-        lang: z.enum(['bg', 'en', 'auto']).optional(),
         limit: z.number().int().min(1).max(50).optional(),
       }),
-      execute: async ({ query, lang, limit }) => {
+      execute: async ({ query, limit }) => {
         const want = limit ?? 10;
         const geoScoped = (scope.geoUnitIds?.length ?? 0) > 0;
         const results: ReturnType<typeof pointer>[] = [];
@@ -72,7 +71,7 @@ export function buildTools(bridge: ReadBridge, scope: ScopeDescriptor): BuildToo
           return true;
         };
         // Over-fetch under a geo-scope so in-region datasets that rank lower globally still surface.
-        const hits = await bridge.search(query, lang, geoScoped ? GEO_SCOPED_SEARCH_LIMIT : want);
+        const hits = await bridge.search(query, geoScoped ? GEO_SCOPED_SEARCH_LIMIT : want);
         for (const hit of hits) {
           if (results.length >= want) break;
           take(resolveScoped(hit.datasetId), hit.score);

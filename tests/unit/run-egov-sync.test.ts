@@ -41,7 +41,6 @@ function testConfig(): DanniConfig {
       onOverlap: 'skip',
       failureRateThreshold: 0.5,
       enabled: false,
-      timezone: 'Europe/Sofia',
       notifier: { kind: 'stderr' },
     },
   } as unknown as DanniConfig;

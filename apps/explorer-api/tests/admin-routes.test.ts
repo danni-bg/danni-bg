@@ -96,9 +96,9 @@ describe('GET/PUT /api/admin/settings', () => {
   });
 
   it('PUT toggles round-trips', async () => {
-    await put(ADMIN, { toggles: { chatEnabled: false, freshnessSloSeconds: 3600 } });
+    await put(ADMIN, { toggles: { chatEnabled: false, defaultTokenLimit: 3600 } });
     const body = (await (await get(ADMIN)).json()) as { toggles: unknown };
-    expect(body.toggles).toEqual({ chatEnabled: false, freshnessSloSeconds: 3600 });
+    expect(body.toggles).toEqual({ chatEnabled: false, defaultTokenLimit: 3600 });
   });
 
   it('PUT rejects an invalid body with 400', async () => {
