@@ -40,13 +40,23 @@ describe('TenantsRepo (spec 029)', () => {
     expect(row?.memberCount).toBe(1);
   });
 
-  it('addMember is idempotent and upserts the role', () => {
+  it('addMember is insert-only: re-adding never changes the role (spec 036 FR-180)', () => {
     const t = s.tenants.create({ name: 'T', slug: 't' });
     const u = s.mkUser('u@t.test');
-    s.tenants.addMember(t.id, u.id, 'member');
-    s.tenants.addMember(t.id, u.id, 'admin'); // conflict → role updated, not duplicated
+    expect(s.tenants.addMember(t.id, u.id, 'owner')).toBe(true);
+    expect(s.tenants.addMember(t.id, u.id, 'member')).toBe(false); // conflict → row untouched
     expect(s.tenants.membersOf(t.id)).toHaveLength(1);
-    expect(s.tenants.membershipOf(t.id, u.id)?.role).toBe('admin');
+    expect(s.tenants.membershipOf(t.id, u.id)?.role).toBe('owner');
+  });
+
+  it('ownerCount counts only owners of the given tenant (spec 036 FR-182)', () => {
+    const t = s.tenants.create({ name: 'T', slug: 'oc' });
+    const other = s.tenants.create({ name: 'O', slug: 'oc2' });
+    expect(s.tenants.ownerCount(t.id)).toBe(0);
+    s.tenants.addMember(t.id, s.mkUser('o1@t.test').id, 'owner');
+    s.tenants.addMember(t.id, s.mkUser('a1@t.test').id, 'admin');
+    s.tenants.addMember(other.id, s.mkUser('o2@t.test').id, 'owner');
+    expect(s.tenants.ownerCount(t.id)).toBe(1);
   });
 
   it('setMemberRole + removeMember', () => {
