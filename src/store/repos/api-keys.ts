@@ -40,6 +40,9 @@ export interface ApiKeyView {
   lastUsedAt: string | null;
   expiresAt: string | null;
   revokedAt: string | null;
+  /** Per-key request-quota override (spec 040 FR-221); null = falls back to the plan/platform default.
+   * Surfaced wherever a key is listed so the effective cap (own vs default) is visible without SQL. */
+  quotaLimit: number | null;
 }
 
 export type ResolveResult =
@@ -71,6 +74,7 @@ function toView(row: ApiKeyRow): ApiKeyView {
     lastUsedAt: row.last_used_at,
     expiresAt: row.expires_at,
     revokedAt: row.revoked_at,
+    quotaLimit: row.quota_limit,
   };
 }
 
@@ -154,6 +158,17 @@ export class ApiKeyRepo {
     const res = this.db
       .query('UPDATE api_keys SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL')
       .run(now, id, userId);
+    return res.changes > 0;
+  }
+
+  /**
+   * Set (or clear, with `null`) a key's per-key request-quota override (spec 040 FR-221). Per-key
+   * limits are billing policy, so this is NOT owner-scoped — only a super-admin route may call it (a key
+   * owner MUST NOT set their own cap). Returns true if the key exists and was updated. The new cap takes
+   * effect on the key's next request (the gate reads `quota_limit` per request).
+   */
+  setQuotaLimit(id: string, limit: number | null): boolean {
+    const res = this.db.query('UPDATE api_keys SET quota_limit = ? WHERE id = ?').run(limit, id);
     return res.changes > 0;
   }
 }

@@ -52,6 +52,8 @@ export function tenantRoutes(
       id: t.id,
       name: t.name,
       slug: t.slug,
+      // `plan` is echoed for display only — it drives no limit (spec 040 FR-224, deferred to a pricing
+      // spec). Rate/quota/token caps come from platform (or per-tenant, spec 042) settings, not here.
       plan: t.plan,
       role: active.role,
       ...(isAdmin ? { members: tenants.membersOf(t.id) } : {}),

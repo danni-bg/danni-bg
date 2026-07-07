@@ -89,6 +89,18 @@ capabilities each have their own spec:
   with a Retry-After seam for when one exists (FR-212). The concurrent check-then-record overrun is a
   conscious, documented + tested bound (`quota.ts` `maxConcurrentOverrun` = (concurrentTurns−1) ×
   per-turn cost), not a distributed lock (FR-213). Rejection metrics stay spec 045 — builds on 021/028
+- 040 request-quota & rate-limit semantics: fixes spec 028's mixed attribution. The data-API quota +
+  rate principal is now the API KEY (`api-metering.ts`: rate bucket keyed by `key.id`,
+  `ApiUsageRepo.countSinceForKey` filters `api_usage` by `key_id`), so a per-key `quota_limit` compares
+  against that key's own usage — not the owner's aggregate (FR-220). `quota_limit` is settable/clearable
+  via `ApiKeyRepo.setQuotaLimit` + super-admin `PUT /api/admin/api-keys/:id/quota` (billing policy —
+  owners never set their own; `null` clears to the plan default) and is surfaced as `quotaLimit` in the
+  key view (FR-221). One recording semantic on both gates: a request is counted IFF admitted past its
+  gate (auth+scope+rate+quota); handler-level 400/404/5xx + the chat token-quota 429 still count —
+  documented in the middleware (FR-222, preserves spec 039's chat token metering). The request-quota 429
+  now sets `Retry-After` from `quotaWindowSec` (FR-223). `tenants.plan` is explicitly DEFERRED — it drives
+  no runtime limit until a pricing spec, documented on the column + tenant route (FR-224). No migration
+  (`quota_limit` existed since 016) — builds on 027/028/029
 - 041 tenant activation (reachable non-default orgs): fulfils spec 029's FR-128/FR-132 beyond the
   `default` org. The active org is now an explicit, PERSISTED per-user selection (`users.active_tenant_id`,
   migration 018) — `requireAuth` resolves it via `TenantsRepo.activeMembership` (falls back to the

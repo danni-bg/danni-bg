@@ -65,6 +65,16 @@ describe('ApiKeyRepo', () => {
     expect(view.scopes).toEqual(['read']);
   });
 
+  it('sets/clears a per-key quota override, visible in the view (spec 040 FR-221)', () => {
+    const { view } = repo.create({ userId: 'u1', name: 'k' });
+    expect(view.quotaLimit).toBeNull(); // defaults to the plan default
+    expect(repo.setQuotaLimit(view.id, 500)).toBe(true);
+    expect(repo.listForUser('u1')[0]?.quotaLimit).toBe(500);
+    expect(repo.setQuotaLimit(view.id, null)).toBe(true); // clearable
+    expect(repo.listForUser('u1')[0]?.quotaLimit).toBeNull();
+    expect(repo.setQuotaLimit('no-such-key', 10)).toBe(false); // 404 seam
+  });
+
   it('throttles the last_used_at bump within the window and resumes past it (spec 043 FR-254)', () => {
     const t0 = '2026-07-07T00:00:00.000Z';
     const plus = (ms: number) => new Date(Date.parse(t0) + ms).toISOString();

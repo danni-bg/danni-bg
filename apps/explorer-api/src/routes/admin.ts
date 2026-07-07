@@ -162,6 +162,31 @@ export function adminRoutes(
     });
   }
 
+  // Per-key request-quota override (spec 040 FR-221): a super-admin sets/clears a key's `quota_limit`.
+  // Per-key limits are billing policy — key owners never set their own (that path is /api/me, human +
+  // owner-scoped, and deliberately has no quota knob). Gated by requireAdmin above, which a machine key
+  // can never satisfy. `null` clears the override, falling the key back to the plan/platform default.
+  const apiKeys = opts.apiKeys;
+  if (apiKeys) {
+    const quotaBody = z.object({ limit: z.number().int().nonnegative().nullable() });
+    app.put('/api-keys/:id/quota', async (c) => {
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: { code: 'bad_request', message: 'invalid JSON body' } }, 400);
+      }
+      const parsed = quotaBody.safeParse(body);
+      if (!parsed.success) {
+        return c.json({ error: { code: 'bad_request', message: 'invalid quota limit' } }, 400);
+      }
+      if (!apiKeys.setQuotaLimit(c.req.param('id'), parsed.data.limit)) {
+        return c.json({ error: { code: 'not_found', message: 'no such key' } }, 404);
+      }
+      return c.json({ ok: true, quotaLimit: parsed.data.limit });
+    });
+  }
+
   // Super-admin org management (spec 029 FR-132): list every org + create a new one. Member seeding
   // (spec 041 FR-232) lets a platform admin add/remove a member on ANY org — a platform admin outranks
   // org owners so the owner-CALLER rule is bypassed, but the zero-owner invariant (spec 036 FR-182) is
