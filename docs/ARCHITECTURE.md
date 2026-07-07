@@ -134,8 +134,9 @@ Extractors (src/enrich/extractors)         registerEntities → entities + datas
   iso8601_dates · bg_month_dates · column_name_heuristics
                                             registerEntityRelations → entity_relations
                                               (part_of: municipality → oblast, from gazetteer)
-Translators (src/enrich/translators)       translate → translations
+Translators (src/enrich/translators)       translate → translations (incremental: skip unchanged text_bg)
   local-marianmt (stub) │ hosted-api        BG preserved byte-exact; EN added with provenance/confidence
+                                            stub (no translateFn) short-circuits the whole stage (spec 051)
 ```
 
 **Publisher-derived geo recall** (`bg_admin_publisher`, `BgAdminPublisherExtractor`). The

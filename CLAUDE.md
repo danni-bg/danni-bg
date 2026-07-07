@@ -131,5 +131,16 @@ capabilities each have their own spec:
   throttled to at most once per 5 min (`repos/last-seen.ts` `bumpDue`), so steady-state authenticated
   reads perform zero writes (timestamps become "last use within N minutes")
 
+- 051 translation efficiency: the enrich/translate stage is now incremental. `translateSubjects`
+  compares against the stored `(subject kind, subject id, translator)` row and SKIPS a subject whose
+  source `text_bg` is unchanged (FR-330) — no translator call, no write; a changed source, new subject,
+  or different translator id still translates. The dead `force` option (never read) + its stale
+  `TranslationsRepo.upsert` comment are removed (FR-331; translator ids embed model version, so a
+  model change re-translates without a flag). A no-op stub translator (`Translator.noop` —
+  `LocalMarianMtTranslator` with no `translateFn`) short-circuits the whole stage with one
+  `curate.translate-skipped-stub` log line (FR-332), keeping the `hosted-api` seam intact. The
+  `curate.completed` log + `RunCurateResult` now report `translationsWritten`/`translationsSkipped`/
+  `translationsEmpty` (FR-333)
+
 Project constitution: `.specify/memory/constitution.md` (v1.1.1; the locked test runner is `bun:test`).
 <!-- SPECKIT END -->

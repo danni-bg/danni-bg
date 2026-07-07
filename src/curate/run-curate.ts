@@ -47,6 +47,10 @@ export interface RunCurateResult {
   entitiesAttached: number;
   linksCreated: number;
   translationsWritten: number;
+  /** Subjects skipped because their (subject, translator, source text) was unchanged (FR-330). */
+  translationsSkipped: number;
+  /** Subjects with empty source text — no translation attempted (FR-333). */
+  translationsEmpty: number;
   /** Entity<->entity relations (e.g. municipality part_of oblast) asserted into the graph. */
   relationsCreated: number;
 }
@@ -90,6 +94,16 @@ export async function runCurate(opts: RunCurateOptions): Promise<RunCurateResult
   let entitiesAttached = 0;
   const touchedEntityIds = new Set<string>();
   let translationsWritten = 0;
+  let translationsSkipped = 0;
+  let translationsEmpty = 0;
+
+  // Stub short-circuit (FR-332): a no-op translator can only write empty rows, so
+  // skip the whole stage once rather than looping the catalog. Configuring a
+  // hosted-api translator (or a stub `translateFn` override) re-enables it.
+  const translationActive = !!opts.translator && !opts.entitiesOnly && !opts.translator.noop;
+  if (opts.translator && !opts.entitiesOnly && opts.translator.noop) {
+    log.info('curate.translate-skipped-stub', { translator: opts.translator.id });
+  }
 
   for (const dataset of targets) {
     const resources = resourcesRepo.listByDataset(dataset.id);
@@ -149,7 +163,7 @@ export async function runCurate(opts: RunCurateOptions): Promise<RunCurateResult
     entitiesAttached += result.attached;
     for (const c of result.candidates) touchedEntityIds.add(c.candidate.id);
 
-    if (opts.translator && !opts.entitiesOnly) {
+    if (translationActive && opts.translator) {
       const subjects = [
         { subjectKind: 'dataset_title' as const, subjectId: dataset.id, textBg: dataset.title_bg },
         ...(dataset.description_bg
@@ -167,6 +181,8 @@ export async function runCurate(opts: RunCurateOptions): Promise<RunCurateResult
         subjects,
       );
       translationsWritten += tx.count;
+      translationsSkipped += tx.skipped;
+      translationsEmpty += tx.empty;
     }
   }
 
@@ -187,6 +203,8 @@ export async function runCurate(opts: RunCurateOptions): Promise<RunCurateResult
     linksSkippedHubs: linkResult.skippedHubs,
     relationsCreated: relationResult.created,
     translationsWritten,
+    translationsSkipped,
+    translationsEmpty,
   });
 
   return {
@@ -195,6 +213,8 @@ export async function runCurate(opts: RunCurateOptions): Promise<RunCurateResult
     entitiesAttached,
     linksCreated: linkResult.created,
     translationsWritten,
+    translationsSkipped,
+    translationsEmpty,
     relationsCreated: relationResult.created,
   };
 }
