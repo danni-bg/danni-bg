@@ -1,7 +1,8 @@
 # Local Ory identity stack for danni-bg (spec 019). Kratos owns identities in its
 # OWN Postgres; the danni app keeps its data in SQLite (store/danni.sqlite) — untouched.
 # Oathkeeper fronts the gated API routes (/api/{chat,admin,auth}), validates the Kratos
-# session, and injects X-User-* headers that the Hono backend trusts.
+# session, and injects X-User-* headers — honored by the Hono backend only behind the
+# TRUST_PROXY_AUTH_HEADERS opt-in (spec 034; default off, cookie auth instead).
 #
 # Dev: docker compose up -d  →  bun run explorer:api (host :8790)  →  vite (host :5173).
 # Ports use a 14xxx/15xxx band to avoid colliding with the sibling looper stack (34xxx).

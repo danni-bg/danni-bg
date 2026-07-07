@@ -18,8 +18,12 @@ single-port origin and travels through the `/kratos` proxy. Clicking a recovery 
 `:14433` is internal-only (proxy upstream + the server-side `whoami` call).
 
 **Oathkeeper (optional).** If you front the stack with Oathkeeper, it validates the
-session and injects `X-User-*` headers, which the backend trusts in preference to its own
-whoami call. The compose file still includes it for that deployment style.
+session and injects `X-User-*` headers. The backend honors those headers **only** when
+`TRUST_PROXY_AUTH_HEADERS=true` is set (spec 034) — setting it is an operator assertion that
+Oathkeeper is the *sole* path to the app port (nothing can reach `:8790` directly), since a
+directly-reachable app would accept forged headers. With the flag off (the default, and the
+single-port deployment) the headers are ignored and the backend does its own whoami call.
+The compose file still includes Oathkeeper for that deployment style.
 
 ## Components & ports (14xxx/15xxx band — avoids the looper stack's 34xxx)
 

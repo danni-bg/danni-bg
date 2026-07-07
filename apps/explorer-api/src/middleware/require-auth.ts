@@ -41,7 +41,10 @@ export type AuthEnv = {
 };
 
 // Optional convenience: emails auto-promoted to admin on FIRST login (existing rows keep their role).
-// Otherwise promote with `danni admin grant <email>`. Read per call so it's configurable + testable.
+// Spec 034 FR-163: promotion additionally requires a VERIFIED email. An unverified match creates a
+// plain `user` row, and promotion is evaluated on first creation only — so verify before first login
+// (a later verified login does NOT upgrade the row; use `danni admin grant <email>` instead).
+// Read per call so it's configurable + testable.
 function isBootstrapAdmin(email: string): boolean {
   const list = (process.env.ADMIN_BOOTSTRAP_EMAILS ?? '')
     .split(',')
@@ -51,9 +54,10 @@ function isBootstrapAdmin(email: string): boolean {
 }
 
 /**
- * Resolve the request identity from Oathkeeper's injected X-User-* headers (when fronted by
- * Oathkeeper) OR, when those are absent and a `resolveSession` is configured, by validating the
- * Kratos session cookie directly (single-port mode — no Oathkeeper needed). 401 if neither yields one.
+ * Resolve the request identity from Oathkeeper's injected X-User-* headers (ONLY behind the
+ * TRUST_PROXY_AUTH_HEADERS opt-in — spec 034) OR, when those yield nothing and a `resolveSession`
+ * is configured, by validating the Kratos session cookie directly (single-port mode — the default,
+ * no Oathkeeper needed). 401 if neither yields one.
  */
 export function requireAuth(
   users: UsersRepo,
@@ -107,7 +111,7 @@ export function requireAuth(
     if (!identity) {
       return c.json({ error: { code: 'unauthorized', message: 'authentication required' } }, 401);
     }
-    const createRole = isBootstrapAdmin(identity.email) ? 'admin' : 'user';
+    const createRole = identity.verified && isBootstrapAdmin(identity.email) ? 'admin' : 'user';
     const user = users.findOrCreateByKratosId({
       kratosIdentityId: identity.userId,
       email: identity.email,
