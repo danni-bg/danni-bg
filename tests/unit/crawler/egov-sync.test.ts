@@ -10,6 +10,7 @@ import { runEgovSyncRun } from '../../../src/crawler/run-egov-sync.ts';
 import { runCurate } from '../../../src/curate/run-curate.ts';
 import { openDb } from '../../../src/store/db.ts';
 import { runMigrations } from '../../../src/store/migrate.ts';
+import { CrawlCheckpointsRepo } from '../../../src/store/repos/crawl-checkpoints.ts';
 import { CuratedArtifactsRepo } from '../../../src/store/repos/curated-artifacts.ts';
 import { DatasetsRepo } from '../../../src/store/repos/datasets.ts';
 import { OrganizationsRepo } from '../../../src/store/repos/organizations.ts';
@@ -495,6 +496,59 @@ describe('crawler.egov-sync', () => {
     await runCurate({ db, storeRoot, curatorVersion: 'v' });
     const art = new CuratedArtifactsRepo(db).byDataset(DATASET_URI)[0];
     expect(JSON.parse(art?.schema_json ?? '{}').rowCount).toBe(2);
+    db.close();
+  });
+
+  it('a publisher scope enumerates + captures only that publisher’s datasets (spec 048 SC-1)', async () => {
+    const storeRoot = globalThis.__TEST_TMP_DIR__;
+    const db = freshDb(storeRoot);
+    // The listDatasets fixture has 3 datasets (org 113, 191, …); scope to org 113 only.
+    const result = await capture(storeRoot, db, {}, { publishers: ['egov-org-113'] });
+    expect(result.totals.captured).toBe(3);
+    expect(result.totals.outOfScope).toBe(0);
+    // Only the org-113 dataset is frozen — the other publishers’ uris never enter the campaign.
+    expect(new CrawlCheckpointsRepo(db).frozenIds(result.scopeHash)).toEqual([DATASET_URI]);
+    expect(new DatasetsRepo(db).get(DATASET_URI)?.publisher_id).toBe('egov-org-113');
+    db.close();
+  });
+
+  it('a tag scope captures a matching dataset (tags resolved from details, FR-301)', async () => {
+    const storeRoot = globalThis.__TEST_TMP_DIR__;
+    const db = freshDb(storeRoot);
+    const oneDataset = {
+      success: true,
+      datasets: [{ id: 1, uri: DATASET_URI, org_id: 113, name: 'x' }],
+    };
+    // The details fixture carries the 'ППС' tag → in scope.
+    const result = await capture(
+      storeRoot,
+      db,
+      { listDatasets: () => oneDataset },
+      { tags: ['ППС'] },
+    );
+    expect(result.totals.captured).toBe(3);
+    expect(result.totals.outOfScope).toBe(0);
+    db.close();
+  });
+
+  it('a tag scope records a non-matching dataset as outOfScope, never captured (FR-301/303)', async () => {
+    const storeRoot = globalThis.__TEST_TMP_DIR__;
+    const db = freshDb(storeRoot);
+    const oneDataset = {
+      success: true,
+      datasets: [{ id: 1, uri: DATASET_URI, org_id: 113, name: 'x' }],
+    };
+    const result = await capture(
+      storeRoot,
+      db,
+      { listDatasets: () => oneDataset },
+      { tags: ['no-such-tag'] },
+    );
+    expect(result.totals.captured).toBe(0);
+    expect(result.totals.failed).toBe(0);
+    expect(result.totals.outOfScope).toBe(1);
+    // Out of scope → not persisted as a captured dataset.
+    expect(new DatasetsRepo(db).get(DATASET_URI)).toBeNull();
     db.close();
   });
 

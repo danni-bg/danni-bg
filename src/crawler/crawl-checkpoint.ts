@@ -4,6 +4,7 @@ import { withContext } from '../logging/logger.ts';
 import { CheckpointCorruptError, CrawlCheckpointsRepo } from '../store/repos/crawl-checkpoints.ts';
 import type { EgovBgClient } from './egov-bg-client.ts';
 import { computeScopeHash } from './scope-hash.ts';
+import { egovSummaryInScope } from './scope.ts';
 
 const PAGE_SIZE = 100;
 
@@ -28,7 +29,13 @@ export interface CampaignHandle {
   degraded: boolean;
 }
 
-/** Enumerate the full in-scope dataset-uri set once by paging listDatasets (FR-003, research R2). */
+/**
+ * Enumerate the in-scope dataset-uri set once by paging listDatasets (FR-003, research R2). The
+ * campaign is frozen to only in-scope uris (spec 048, FR-300/303): a `datasetIds` scope bypasses
+ * discovery, and otherwise each `listDatasets` summary is filtered by `egovSummaryInScope` so a
+ * publisher scope freezes only that publisher's uris instead of the whole portal. Tags (absent
+ * from the summary) are resolved at processing time (FR-301), so a tag scope keeps candidates here.
+ */
 async function enumerateUris(client: EgovBgClient, scope: ScopeConfig): Promise<string[]> {
   if (scope.datasetIds && scope.datasetIds.length > 0) {
     return [...scope.datasetIds].sort();
@@ -37,7 +44,9 @@ async function enumerateUris(client: EgovBgClient, scope: ScopeConfig): Promise<
   let page = 1;
   for (;;) {
     const resp = await client.listDatasets({ recordsPerPage: PAGE_SIZE, pageNumber: page });
-    for (const d of resp.datasets) uris.push(d.uri);
+    for (const d of resp.datasets) {
+      if (egovSummaryInScope(d, scope)) uris.push(d.uri);
+    }
     if (resp.datasets.length < PAGE_SIZE) break;
     page++;
   }

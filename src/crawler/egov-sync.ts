@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { ScopeConfig } from '../config/schema.ts';
 import { atomicWriteFile, safePathSegment } from '../lib/fs.ts';
 import { sha256Hex } from '../lib/hash.ts';
 import { nowIso } from '../lib/time.ts';
@@ -18,6 +19,7 @@ import { ResourcesRepo } from '../store/repos/resources.ts';
 import { decideDatasetSkip } from './crawl-checkpoint.ts';
 import type { EgovBgClient } from './egov-bg-client.ts';
 import { datasetValidator } from './egov-validator.ts';
+import { buildScopePredicate, egovPublisherId } from './scope.ts';
 
 export interface EgovSyncOptions {
   db: Database;
@@ -27,6 +29,12 @@ export interface EgovSyncOptions {
   handle: SyncRunHandle;
   /** Campaign key (FR-003a) under which checkpoint progress is recorded. */
   scopeHash: string;
+  /**
+   * The active scope, applied as a per-dataset in-scope check against the full getDatasetDetails
+   * (spec 048, FR-301) — resolves tags (absent from the enumeration summary) and confirms
+   * publisher; an out-of-scope dataset is recorded as outOfScope, never captured.
+   */
+  scope: ScopeConfig;
   /** Ordered dataset uris to process this session (from the resume planner). */
   uris: string[];
   /** Re-attempt sub-cap recorded failures (FR-009). */
@@ -174,6 +182,9 @@ export async function runEgovSync(opts: EgovSyncOptions): Promise<EgovSyncResult
   const orgsRepo = new OrganizationsRepo(opts.db);
   const checkpoint = new CrawlCheckpointsRepo(opts.db);
   const locale = opts.locale ?? 'bg';
+  // Per-dataset in-scope check (FR-301): the same predicate the CKAN path uses, now over the full
+  // egov details (publisher + tags), so scope means the same thing on both adapters (FR-305/SC-4).
+  const inScope = buildScopePredicate(opts.scope);
 
   const orgCache = new Map<number, { uri: string; name: string }>();
   let orgPagesLoaded = 0;
@@ -240,6 +251,23 @@ export async function runEgovSync(opts: EgovSyncOptions): Promise<EgovSyncResult
       continue;
     }
     const d = details.data;
+
+    // Per-dataset in-scope check (spec 048, FR-301/303): the enumeration summary can't carry tags,
+    // so a candidate frozen for a tag scope (or one whose publisher drifted) is confirmed here
+    // against the full details. Out-of-scope → recorded as outOfScope, NEVER captured; the cursor
+    // advances and the dataset is marked done so a bounded session doesn't revisit it.
+    const tags = (d.tags ?? []).map((t) => t.name);
+    if (
+      !inScope({ id: d.uri, slug: slugify(d.name), publisherId: egovPublisherId(d.org_id), tags })
+    ) {
+      totals.outOfScope += 1;
+      opts.handle.recordEvent({ datasetId: uri, outcome: 'out_of_scope' });
+      checkpoint.upsertDataset({ scopeHash: opts.scopeHash, datasetUri: uri });
+      checkpoint.markDatasetComplete(opts.scopeHash, uri);
+      checkpoint.advanceCursor(opts.scopeHash, uri, opts.handle.runId);
+      continue;
+    }
+
     const validator = datasetValidator(details);
 
     // Dataset-level skip (FR-002): validator unchanged AND all resources captured.

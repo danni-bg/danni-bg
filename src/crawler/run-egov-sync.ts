@@ -11,6 +11,7 @@ import type { RunTrigger } from '../store/repos/sync-runs.ts';
 import { buildOrLoadCampaign, planSession, prepareSession } from './crawl-checkpoint.ts';
 import type { EgovBgClient } from './egov-bg-client.ts';
 import { runEgovSync } from './egov-sync.ts';
+import { assertScopeSupported } from './scope.ts';
 
 /**
  * Orchestrator for the resumable egov crawl (FR-007, research.md R4) — mirrors `runSync`
@@ -77,6 +78,10 @@ function handleWithdrawals(
 export async function runEgovSyncRun(opts: RunEgovSyncRunOptions): Promise<RunEgovSyncRunResult> {
   const checkpoint = new CrawlCheckpointsRepo(opts.db);
 
+  // Fail loudly BEFORE acquiring the lock / touching the portal if the scope names a field the
+  // egov adapter can't express (spec 048, FR-302) — no capture happens on an unsupported scope.
+  assertScopeSupported(opts.scope, 'egov-bg');
+
   const handle = beginSyncRun({
     db: opts.db,
     storeRoot: opts.storeRoot,
@@ -119,6 +124,7 @@ export async function runEgovSyncRun(opts: RunEgovSyncRunOptions): Promise<RunEg
       client: opts.client,
       handle,
       scopeHash,
+      scope: opts.scope,
       uris: plan.uris,
       ...(opts.retryFailed !== undefined ? { retryFailed: opts.retryFailed } : {}),
       ...(opts.locale !== undefined ? { locale: opts.locale } : {}),

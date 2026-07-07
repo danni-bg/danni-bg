@@ -38,6 +38,21 @@ function pagingClient(uris: string[], pageSize = 100): EgovBgClient {
   } as unknown as EgovBgClient;
 }
 
+/** A paging client whose summaries carry an org_id, keyed by uri (for publisher-scope tests). */
+function orgPagingClient(rows: { uri: string; org_id: number }[], pageSize = 100): EgovBgClient {
+  return {
+    listDatasets: async ({ pageNumber }: { recordsPerPage?: number; pageNumber?: number }) => {
+      const page = pageNumber ?? 1;
+      const slice = rows.slice((page - 1) * pageSize, page * pageSize);
+      return {
+        success: true,
+        total_records: rows.length,
+        datasets: slice.map((r, i) => ({ id: i, uri: r.uri, org_id: r.org_id, name: r.uri })),
+      };
+    },
+  } as unknown as EgovBgClient;
+}
+
 describe('crawler.crawl-checkpoint planner', () => {
   it('buildOrLoadCampaign enumerates the in-scope set, sorts by uri, and freezes once', async () => {
     const db = freshDb();
@@ -88,6 +103,50 @@ describe('crawler.crawl-checkpoint planner', () => {
     await buildOrLoadCampaign({ db, client, scope });
     expect(calls).toBe(0); // no discovery paging
     expect(repo.frozenIds(scopeHash)).toEqual(['d1', 'd2']);
+    db.close();
+  });
+
+  it('a publisher scope freezes only that publisher’s uris (spec 048 FR-300/303, SC-1)', async () => {
+    const db = freshDb();
+    const repo = new CrawlCheckpointsRepo(db);
+    const scope = { publishers: ['egov-org-113'] };
+    const { scopeHash } = computeScopeHash(scope);
+    await buildOrLoadCampaign({
+      db,
+      client: orgPagingClient([
+        { uri: 'target-b', org_id: 113 },
+        { uri: 'other', org_id: 7 },
+        { uri: 'target-a', org_id: 113 },
+      ]),
+      scope,
+    });
+    // Sorted, and only org 113 datasets — the other publisher's uri is never frozen.
+    expect(repo.frozenIds(scopeHash)).toEqual(['target-a', 'target-b']);
+    db.close();
+  });
+
+  it('reconcileCatalog appends only in-scope additions for a publisher scope (FR-303)', async () => {
+    const db = freshDb();
+    const repo = new CrawlCheckpointsRepo(db);
+    const scope = { publishers: ['egov-org-113'] };
+    const { scopeHash } = computeScopeHash(scope);
+    repo.createCampaign({
+      scopeHash,
+      scopeJson: { publishers: ['egov-org-113'], categories: [], tags: [], datasetIds: [] },
+      frozenIds: ['target-a'],
+    });
+    const out = await reconcileCatalog({
+      db,
+      client: orgPagingClient([
+        { uri: 'target-a', org_id: 113 },
+        { uri: 'target-b', org_id: 113 }, // new + in-scope → appended
+        { uri: 'intruder', org_id: 9 }, // new but out-of-scope → NOT appended
+      ]),
+      scope,
+      scopeHash,
+    });
+    expect(out.added).toEqual(['target-b']);
+    expect(repo.frozenIds(scopeHash)).toEqual(['target-a', 'target-b']); // no 'intruder'
     db.close();
   });
 
