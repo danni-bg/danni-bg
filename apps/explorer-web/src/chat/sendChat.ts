@@ -1,7 +1,7 @@
 // Chat streaming client (T050). The event→callback dispatch is a pure function (unit-tested); the
 // sendChat IO wrapper reads the SSE body via the tested decoder and forwards decoded events to it.
 
-import type { Citation, MapAnchor, ProviderConfig, ScopeDescriptor } from '../types.ts';
+import type { Citation, MapAnchor, ScopeDescriptor } from '../types.ts';
 import { type SSEEvent, createSSEDecoder, parseEventData } from './sse.ts';
 
 export interface ChatCallbacks {
@@ -28,7 +28,6 @@ export interface ChatRequestBody {
   scope: ScopeDescriptor;
   /** Datasets to ground the answer in (rows injected) without narrowing scope — e.g. the open reader. */
   groundingDatasetIds?: string[];
-  provider: ProviderConfig;
 }
 
 /** Route one decoded SSE event to the matching callback. Pure + exhaustively unit-tested. */

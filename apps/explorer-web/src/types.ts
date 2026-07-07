@@ -99,14 +99,6 @@ export interface ResourceContent {
   gridTruncated?: boolean;
 }
 
-export interface ProviderConfig {
-  kind: 'openai-compatible' | 'anthropic';
-  baseUrl: string | null;
-  model: string;
-  apiKey: string | null;
-  useServerDefault: boolean;
-}
-
 export const EMPTY_FILTERS: FilterState = {
   tags: [],
   publisherIds: [],

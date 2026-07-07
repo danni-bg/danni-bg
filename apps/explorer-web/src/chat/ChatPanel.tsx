@@ -14,21 +14,10 @@ import {
 } from '../lib/meApi.ts';
 import { filterStateToScope } from '../lib/scope.ts';
 import { useExplorer } from '../store/explorerStore.ts';
-import type { Citation, MapAnchor, ProviderConfig } from '../types.ts';
+import type { Citation, MapAnchor } from '../types.ts';
 import { type ChatCallbacks, resumeChat, sendChat } from './sendChat.ts';
 
 const SESSION_KEY = 'danni.chat.session';
-
-// The chat always uses the admin-configured server default — there's no per-user provider override
-// (it would bypass the platform LLM config + token metering). A non-empty model satisfies the
-// request schema; the server ignores it when useServerDefault is set.
-const SERVER_DEFAULT_PROVIDER: ProviderConfig = {
-  kind: 'openai-compatible',
-  baseUrl: null,
-  model: 'server-default',
-  apiKey: null,
-  useServerDefault: true,
-};
 
 // Styled hover tooltip (appears above the button); shown via group-hover so it matches the theme.
 const TOOLTIP =
@@ -379,7 +368,6 @@ export function ChatPanel({ onSelectDataset }: ChatPanelProps) {
           message: question,
           scope,
           ...(reader ? { groundingDatasetIds: [reader.datasetId] } : {}),
-          provider: SERVER_DEFAULT_PROVIDER,
         },
         cb,
         undefined,

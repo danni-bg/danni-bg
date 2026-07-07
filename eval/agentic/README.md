@@ -27,7 +27,9 @@ Every LLM is configurable; defaults inherit the repo-root `.env`
 override (e.g. an independent judge), copy `.env.example` → `eval/agentic/.env`.
 See that file for all `EVAL_*` keys.
 
-- **Subject** = the model the chat runs under (sent explicitly per request).
+- **Subject** = the model the chat runs under — the server-configured provider
+  (admin settings → `EXPLORER_DEFAULT_*`). Since spec 035 the request carries no
+  provider block, so repoint the server (not the eval) to grade a different model.
 - **Judge** = the G-Eval grader. Using gemma to judge gemma is convenient but
   correlated — point `EVAL_JUDGE_*` at a stronger/different endpoint for rigour.
 

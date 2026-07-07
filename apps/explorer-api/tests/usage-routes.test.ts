@@ -255,10 +255,7 @@ describe('POST /api/chat quota gate', () => {
     const res = await s.app.request('/api/chat', {
       method: 'POST',
       headers: USER,
-      body: JSON.stringify({
-        message: 'hi',
-        provider: { kind: 'openai-compatible', model: 'm', apiKey: 'x' },
-      }),
+      body: JSON.stringify({ message: 'hi' }),
     });
     expect(res.status).toBe(429);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe('quota_exceeded');
@@ -271,10 +268,7 @@ describe('POST /api/chat quota gate', () => {
     const res = await s.app.request('/api/chat', {
       method: 'POST',
       headers: USER,
-      body: JSON.stringify({
-        message: 'hi',
-        provider: { kind: 'openai-compatible', model: 'm', apiKey: 'x' },
-      }),
+      body: JSON.stringify({ message: 'hi' }),
     });
     expect(res.status).not.toBe(429);
   });
