@@ -52,6 +52,11 @@ services:
       - ./infra/ory/templates:/etc/config/kratos/templates:ro
     environment:
       DSN: postgres://kratos:kratos@kratos-postgres:5432/kratos?sslmode=disable
+      # Courier SMTP (Ory env mapping → courier.smtp.connection_uri). Dev default: the Mailpit
+      # catcher, no-auth plaintext — Kratos refuses AUTH over an unencrypted connection and Mailpit
+      # accepts unauthenticated mail, so this exact combo is deliberate. The prod overlay REQUIRES a
+      # real relay here instead (spec 037).
+      COURIER_SMTP_CONNECTION_URI: ${COURIER_SMTP_CONNECTION_URI:-smtp://mailpit:1025/?disable_starttls=true}
     depends_on:
       kratos-postgres:
         condition: service_healthy
@@ -89,6 +94,8 @@ services:
 
   # Mailpit catches dev email (Kratos courier → mailpit:1025). Single self-contained port for the
   # UI+API (8025), so — unlike Mailslurper — its web UI never reads another instance's mailbox.
+  # DEV ONLY: the unauthenticated UI exposes every recovery/verification link; the prod overlay
+  # disables this service entirely (spec 037).
   mailpit:
     image: axllent/mailpit:latest
     container_name: danni-mailpit

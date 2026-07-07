@@ -137,8 +137,11 @@ identity:
 
 courier:
   smtp:
-    # No credentials: Kratos refuses to send AUTH over an unencrypted connection, and Mailpit
-    # accepts unauthenticated mail by default — so plaintext + no-auth is the working dev combo.
+    # DEV value — the Mailpit catcher. No credentials: Kratos refuses to send AUTH over an
+    # unencrypted connection, and Mailpit accepts unauthenticated mail by default — so plaintext +
+    # no-auth is the working dev combo. Compose injects COURIER_SMTP_CONNECTION_URI (Ory env
+    # mapping) over this; production REQUIRES a real relay there (spec 037 — recovery/verification
+    # mail is account-takeover material and must never land in an open Mailpit).
     connection_uri: smtp://mailpit:1025/?disable_starttls=true
   template_override_path: /etc/config/kratos/templates
 

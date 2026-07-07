@@ -6,8 +6,11 @@
 #
 # Secrets come from the environment (FR-136), NEVER the committed placeholders. Required env:
 #   POSTGRES_PASSWORD, KRATOS_SECRETS_COOKIE (32+ chars), KRATOS_SECRETS_CIPHER (exactly 32 chars),
-#   DANNI_PROFILE=production. The read substrate (datasets/FTS5/vectors) must be seeded into the
-#   danni_store volume via the sync pipeline (danni sync → curate → index) or a restored backup.
+#   COURIER_SMTP_CONNECTION_URI (a REAL SMTP relay, e.g. smtps://user:pass@smtp.relay.tld:465 —
+#   recovery/verification mail is account-takeover material, so the dev Mailpit sink is refused;
+#   spec 037 FR-190..192), DANNI_PROFILE=production. The read substrate (datasets/FTS5/vectors) must
+#   be seeded into the danni_store volume via the sync pipeline (danni sync → curate → index) or a
+#   restored backup.
 services:
   kratos-postgres:
     environment:
@@ -24,6 +27,16 @@ services:
       DSN: postgres://kratos:${POSTGRES_PASSWORD:?}@kratos-postgres:5432/kratos?sslmode=disable
       SECRETS_COOKIE: ${KRATOS_SECRETS_COOKIE:?set KRATOS_SECRETS_COOKIE}
       SECRETS_CIPHER: ${KRATOS_SECRETS_CIPHER:?set KRATOS_SECRETS_CIPHER}
+      # Real relay ONLY (spec 037): recovery/verification links are account-takeover material. The
+      # secret gate (check-secrets) additionally rejects Mailpit/localhost-shaped values (FR-191).
+      COURIER_SMTP_CONNECTION_URI: ${COURIER_SMTP_CONNECTION_URI:?set COURIER_SMTP_CONNECTION_URI to a real SMTP relay}
+
+  # Mailpit is a dev-only mail sink — its unauthenticated UI would leak every recovery link. The
+  # never-activated profile keeps it out of the production stack entirely (not started, no host
+  # port); Kratos does not depend on it (spec 037, FR-192).
+  mailpit:
+    profiles:
+      - dev-only
 
   app:
     build:

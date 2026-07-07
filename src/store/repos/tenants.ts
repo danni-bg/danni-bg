@@ -67,14 +67,29 @@ export class TenantsRepo {
       .all();
   }
 
-  /** Add (or, on conflict, update the role of) a user in a tenant. Idempotent on (tenant, user). */
-  addMember(tenantId: string, userId: string, role: TenantRole = 'member', now = nowIso()): void {
-    this.db
+  /**
+   * Add a user to a tenant — insert-only (spec 036 FR-180): if the user is already a member, their
+   * existing role is left untouched. Returns true when a membership row was inserted, false when the
+   * user was already a member (callers surface that as a conflict; role changes go via setMemberRole).
+   */
+  addMember(tenantId: string, userId: string, role: TenantRole = 'member', now = nowIso()): boolean {
+    const res = this.db
       .query(
         `INSERT INTO tenant_members (tenant_id, user_id, role, created_at) VALUES (?, ?, ?, ?)
-         ON CONFLICT(tenant_id, user_id) DO UPDATE SET role = excluded.role`,
+         ON CONFLICT(tenant_id, user_id) DO NOTHING`,
       )
       .run(tenantId, userId, role, now);
+    return res.changes > 0;
+  }
+
+  /** How many owners a tenant has — guards the zero-owner invariant (spec 036 FR-182). */
+  ownerCount(tenantId: string): number {
+    const row = this.db
+      .query<{ n: number }, [string]>(
+        "SELECT COUNT(*) AS n FROM tenant_members WHERE tenant_id = ? AND role = 'owner'",
+      )
+      .get(tenantId);
+    return row?.n ?? 0;
   }
 
   setMemberRole(tenantId: string, userId: string, role: TenantRole): boolean {
