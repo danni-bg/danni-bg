@@ -1,5 +1,5 @@
 import { ZodError, type ZodTypeAny, type z } from 'zod';
-import { CkanApiError } from '../lib/errors.ts';
+import { PortalApiError } from '../lib/errors.ts';
 import {
   CkanErrorEnvelopeSchema,
   type GroupListResponse,
@@ -65,7 +65,7 @@ export class CkanClient {
     const res = await this.http.getJson<unknown>(url);
     const errParse = CkanErrorEnvelopeSchema.safeParse(res.body);
     if (errParse.success) {
-      throw new CkanApiError(
+      throw new PortalApiError(
         `CKAN ${action} returned ${errParse.data.error.__type}: ${errParse.data.error.message ?? ''}`,
         res.status,
         { action, type: errParse.data.error.__type },
@@ -75,7 +75,7 @@ export class CkanClient {
       return schema.parse(res.body);
     } catch (err) {
       if (err instanceof ZodError) {
-        throw new CkanApiError(`CKAN ${action} schema violation`, res.status, {
+        throw new PortalApiError(`CKAN ${action} schema violation`, res.status, {
           action,
           issues: err.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
         });

@@ -17,7 +17,6 @@ const VALID = {
   schedule: {
     enabled: false,
     cron: null,
-    timezone: 'Europe/Sofia',
     onOverlap: 'skip',
     failureRateThreshold: 0.05,
     notifier: { kind: 'stderr' },
@@ -34,7 +33,7 @@ describe('config.parseConfig', () => {
   it('accepts a fully-valid config and applies defaults', () => {
     const cfg = parseConfig(VALID);
     expect(cfg.store.freshnessSloSeconds).toBe(86400);
-    expect(cfg.schedule.timezone).toBe('Europe/Sofia');
+    expect(cfg.schedule.onOverlap).toBe('skip');
   });
 
   it('rejects a missing required field', () => {
@@ -44,6 +43,20 @@ describe('config.parseConfig', () => {
 
   it('rejects invalid enum values', () => {
     const bad = { ...VALID, schedule: { ...VALID.schedule, onOverlap: 'wat' } };
+    expect(() => parseConfig(bad)).toThrow(ConfigError);
+  });
+
+  // spec 056 FR-388: the removed `schedule.timezone` key must fail loudly under the strict schema
+  // (cron fires in server-local time) rather than being silently ignored.
+  it('rejects a config carrying the removed schedule.timezone key (FR-388)', () => {
+    const bad = { ...VALID, schedule: { ...VALID.schedule, timezone: 'Europe/Sofia' } };
+    expect(() => parseConfig(bad)).toThrow(ConfigError);
+  });
+
+  // spec 056 FR-389: `onOverlap: 'queue'` was indistinguishable from 'skip' and is removed from the
+  // enum; a config still using it must be rejected (the error names 'skip' as the valid value).
+  it("rejects onOverlap:'queue' (removed enum value, FR-389)", () => {
+    const bad = { ...VALID, schedule: { ...VALID.schedule, onOverlap: 'queue' } };
     expect(() => parseConfig(bad)).toThrow(ConfigError);
   });
 

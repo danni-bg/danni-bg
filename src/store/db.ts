@@ -71,9 +71,3 @@ export function withTransaction<T>(db: Database, fn: () => T): T {
   const tx = db.transaction(() => fn());
   return tx();
 }
-
-export function vecVersion(db: Database): string {
-  const row = db.query<{ v: string }, []>('SELECT vec_version() AS v').get();
-  if (!row) throw new Error('vec_version() returned no rows');
-  return row.v;
-}

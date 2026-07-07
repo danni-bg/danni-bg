@@ -19,7 +19,6 @@ export function SettingsPage() {
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [chatEnabled, setChatEnabled] = useState(true);
-  const [sloSeconds, setSloSeconds] = useState('');
   const [defaultTokenLimit, setDefaultTokenLimit] = useState('');
   const [cachedTokenWeight, setCachedTokenWeight] = useState('');
   const [maxOutputTokens, setMaxOutputTokens] = useState('');
@@ -33,7 +32,6 @@ export function SettingsPage() {
     setBaseUrl(s.llm?.baseUrl ?? '');
     setApiKey('');
     setChatEnabled(s.toggles.chatEnabled ?? true);
-    setSloSeconds(s.toggles.freshnessSloSeconds ? String(s.toggles.freshnessSloSeconds) : '');
     setDefaultTokenLimit(s.toggles.defaultTokenLimit ? String(s.toggles.defaultTokenLimit) : '');
     setCachedTokenWeight(
       s.toggles.cachedTokenWeight != null ? String(s.toggles.cachedTokenWeight) : '',
@@ -57,7 +55,6 @@ export function SettingsPage() {
       llm: { kind, model, baseUrl: baseUrl || null, ...(apiKey ? { apiKey } : {}) },
       toggles: {
         chatEnabled,
-        ...(sloSeconds ? { freshnessSloSeconds: Number.parseInt(sloSeconds, 10) } : {}),
         ...(defaultTokenLimit ? { defaultTokenLimit: Number.parseInt(defaultTokenLimit, 10) } : {}),
         ...(cachedTokenWeight ? { cachedTokenWeight: Number.parseFloat(cachedTokenWeight) } : {}),
         ...(maxOutputTokens ? { maxOutputTokens: Number.parseInt(maxOutputTokens, 10) } : {}),
@@ -123,14 +120,6 @@ export function SettingsPage() {
               onChange={(e) => setChatEnabled(e.target.checked)}
             />
             Чатът е активен
-          </label>
-          <label className="block space-y-1">
-            <span className="text-sm text-muted-foreground">Праг за свежест (секунди)</span>
-            <Input
-              type="number"
-              value={sloSeconds}
-              onChange={(e) => setSloSeconds(e.target.value)}
-            />
           </label>
           <label className="block space-y-1">
             <span className="text-sm text-muted-foreground">

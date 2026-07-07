@@ -23,8 +23,10 @@ export async function run(args: string[]): Promise<number> {
       return 0;
     }
     const next = nextFire(parseCron(config.schedule.cron), new Date());
+    // Cron fires in server-local time (spec 056 FR-388 removed the `timezone` knob); `next` is an
+    // ISO-8601 (UTC) instant.
     process.stdout.write(
-      `schedule: enabled cron='${config.schedule.cron}' tz='${config.schedule.timezone}' next=${next.toISOString()} onOverlap=${config.schedule.onOverlap}\n`,
+      `schedule: enabled cron='${config.schedule.cron}' next=${next.toISOString()} onOverlap=${config.schedule.onOverlap}\n`,
     );
     return 0;
   }
@@ -57,7 +59,7 @@ export async function run(args: string[]): Promise<number> {
       cron: config.schedule.cron,
       onOverlap: config.schedule.onOverlap,
       onLockSkip: () => {
-        if (config.schedule.onOverlap === 'skip') exitCode = 5;
+        exitCode = 5;
       },
       fire: async () => {
         try {
@@ -70,7 +72,7 @@ export async function run(args: string[]): Promise<number> {
             notifier,
           });
         } catch (err) {
-          if (err instanceof LockContentionError && config.schedule.onOverlap === 'skip') {
+          if (err instanceof LockContentionError) {
             exitCode = 5;
             log.warn('schedule.skipped_overlap', { reason: err.message });
             return;

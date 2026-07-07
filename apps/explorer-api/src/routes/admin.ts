@@ -24,6 +24,7 @@ import { serverDefaultFromEnv } from '../chat/providers.ts';
 import { billableTokens, effectiveLimit, quotaView } from '../chat/quota.ts';
 import { parseBody } from '../middleware/parse-body.ts';
 import { type AuthEnv, requireAdmin } from '../middleware/require-auth.ts';
+import { LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT, pageParams } from '../pagination.ts';
 
 function maskedLlm(settings: PlatformSettingsRepo): {
   source: 'settings' | 'env';
@@ -138,7 +139,13 @@ export function adminRoutes(
     app.get('/api-usage', (c) => {
       const windowSec = opts.apiQuotaWindowSec?.() ?? 86_400;
       const since = new Date(Date.now() - windowSec * 1000).toISOString();
-      const principals = apiUsage.summaryAll(since).map((r) => ({
+      // Bounded + pageable principal list (spec 056 FR-392) so a busy window can't dump the whole table.
+      const { limit, offset } = pageParams(
+        new URL(c.req.url).searchParams,
+        LIST_DEFAULT_LIMIT,
+        LIST_MAX_LIMIT,
+      );
+      const principals = apiUsage.summaryAll(since, limit, offset).map((r) => ({
         ...r,
         email: users.get(r.principalId)?.email ?? null,
       }));
@@ -146,7 +153,14 @@ export function adminRoutes(
         ...r,
         name: tenants?.get(r.tenantId)?.name ?? null,
       }));
-      return c.json({ windowSec, principals, byTenant });
+      return c.json({
+        windowSec,
+        principals,
+        byTenant,
+        total: apiUsage.countPrincipalsSince(since),
+        limit,
+        offset,
+      });
     });
   }
 
@@ -172,7 +186,20 @@ export function adminRoutes(
   // org owners so the owner-CALLER rule is bypassed, but the zero-owner invariant (spec 036 FR-182) is
   // still enforced on removal so a seeded org can never be left ownerless from this surface.
   if (tenants) {
-    app.get('/tenants', (c) => c.json({ tenants: tenants.listAll() }));
+    app.get('/tenants', (c) => {
+      // Bounded + pageable org list (spec 056 FR-392).
+      const { limit, offset } = pageParams(
+        new URL(c.req.url).searchParams,
+        LIST_DEFAULT_LIMIT,
+        LIST_MAX_LIMIT,
+      );
+      return c.json({
+        tenants: tenants.listAll(limit, offset),
+        total: tenants.countAll(),
+        limit,
+        offset,
+      });
+    });
 
     // Super-admin view/recovery of any org's overrides (spec 042 FR-244): inspect a tenant's
     // effective (masked) settings and clear all of its overrides so a misconfigured org falls back to
@@ -246,7 +273,13 @@ export function adminRoutes(
     app.get('/usage', (c) => {
       const defaultLimit = opts.defaultTokenLimit?.() ?? 0;
       const weight = opts.cacheWeight?.();
-      const rows = usage.summaryByUser().map((r) => ({
+      // Bounded + pageable per-user usage list (spec 056 FR-392).
+      const { limit, offset } = pageParams(
+        new URL(c.req.url).searchParams,
+        LIST_DEFAULT_LIMIT,
+        LIST_MAX_LIMIT,
+      );
+      const rows = usage.summaryByUser(limit, offset).map((r) => ({
         ...r,
         // `used` becomes the billable total (cache hits discounted); raw input/output/cached kept.
         ...quotaView(
@@ -254,7 +287,7 @@ export function adminRoutes(
           effectiveLimit(r.tokenLimit, defaultLimit),
         ),
       }));
-      return c.json({ users: rows, defaultLimit });
+      return c.json({ users: rows, defaultLimit, total: usage.countUsers(), limit, offset });
     });
 
     const limitBody = z.object({ limit: z.number().int().nonnegative().nullable() });

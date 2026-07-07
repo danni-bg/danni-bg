@@ -12,7 +12,6 @@ export interface AdminLlm {
 }
 
 export interface AdminToggles {
-  freshnessSloSeconds?: number;
   chatEnabled?: boolean;
   defaultTokenLimit?: number;
   cachedTokenWeight?: number;

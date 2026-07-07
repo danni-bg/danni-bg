@@ -98,19 +98,6 @@ describe('manifest.sync-run lifecycle', () => {
     ).toThrow(LockContentionError);
   });
 
-  it('contention with onOverlap=queue still surfaces LockContentionError to the caller', () => {
-    new SyncRunsLockRepo(database).tryAcquire('external-holder');
-    expect(() =>
-      beginSyncRun({
-        db: database,
-        storeRoot,
-        trigger: 'manual',
-        scopeFilter: {},
-        onOverlap: 'queue',
-      }),
-    ).toThrow(LockContentionError);
-  });
-
   it('abort marks the run failed and releases the lock', () => {
     const handle = beginSyncRun({
       db: database,

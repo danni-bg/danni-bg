@@ -73,8 +73,13 @@ export const ScheduleConfigSchema = z
   .object({
     enabled: z.boolean(),
     cron: z.string().nullable().optional(),
-    timezone: z.string().default('Europe/Sofia'),
-    onOverlap: z.enum(['skip', 'queue']),
+    // Cron fires in the SERVER's local time (`nextFire` computes on process-local `Date`); there is no
+    // `timezone` knob (spec 056 FR-388 — the old option silently lied when server TZ ≠ configured TZ).
+    // The schema is `.strict()`, so a config still carrying `timezone` fails loudly on load.
+    // Only `'skip'` overlap handling exists (spec 056 FR-389 removed `'queue'`, which was
+    // indistinguishable from `'skip'` — both threw `LockContentionError`); real queueing is a future
+    // spec. A config with `onOverlap: 'queue'` fails validation, naming `'skip'` as the valid value.
+    onOverlap: z.enum(['skip']),
     failureRateThreshold: z.number().min(0).max(1),
     notifier: NotifierConfigSchema,
   })

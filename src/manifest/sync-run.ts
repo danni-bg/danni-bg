@@ -14,7 +14,7 @@ export interface SyncRunLifecycleOptions {
   storeRoot: string;
   trigger: RunTrigger;
   scopeFilter: ScopeConfig;
-  onOverlap: 'skip' | 'queue';
+  onOverlap: 'skip';
 }
 
 export interface SyncRunHandle {
@@ -56,7 +56,7 @@ export function reapAbandonedRuns(db: Database, now: string = nowIso()): string[
 }
 
 export function beginSyncRun(opts: SyncRunLifecycleOptions): SyncRunHandle {
-  const { db, storeRoot, trigger, scopeFilter, onOverlap } = opts;
+  const { db, storeRoot, trigger, scopeFilter } = opts;
 
   reapAbandonedRuns(db);
 
@@ -74,10 +74,8 @@ export function beginSyncRun(opts: SyncRunLifecycleOptions): SyncRunHandle {
   });
 
   if (!acquired) {
-    if (onOverlap === 'skip') {
-      throw new LockContentionError(lock.state().held_by_run_id);
-    }
-    // queue mode: caller must wait; we surface contention as a thrown signal too
+    // Only `onOverlap: 'skip'` exists (spec 056 FR-389): a contended begin surfaces the lock holder
+    // as a thrown `LockContentionError` for the caller to handle (exit 5 on the scheduled path).
     throw new LockContentionError(lock.state().held_by_run_id);
   }
 

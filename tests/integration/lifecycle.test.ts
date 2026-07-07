@@ -32,7 +32,6 @@ function makeConfig(storeRoot: string, scope: DanniConfig['scope'] = {}): DanniC
     schedule: {
       enabled: false,
       cron: null,
-      timezone: 'Europe/Sofia',
       onOverlap: 'skip',
       failureRateThreshold: 0.05,
       notifier: { kind: 'stderr' },

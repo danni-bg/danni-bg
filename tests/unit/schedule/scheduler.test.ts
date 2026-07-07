@@ -131,34 +131,6 @@ describe('schedule.Scheduler', () => {
     expect(fires).toBe(1);
   });
 
-  it('queue mode defers a queued fire after the running one finishes', async () => {
-    const fires: number[] = [];
-    let firstStarted = false;
-    let resolveFirst: (() => void) | null = null;
-    const firstFinished = new Promise<void>((r) => {
-      resolveFirst = r;
-    });
-    const sched = new Scheduler({
-      cron: '* * * * *',
-      onOverlap: 'queue',
-      now: () => new Date('2026-05-08T00:00:00Z'),
-      sleep: async () => undefined,
-      fire: async () => {
-        fires.push(fires.length);
-        if (!firstStarted) {
-          firstStarted = true;
-          await firstFinished;
-        }
-      },
-      maxFires: 1,
-    });
-    const p = sched.start();
-    // resolve the first fire
-    setTimeout(() => resolveFirst?.(), 5);
-    await p;
-    expect(fires.length).toBe(1);
-  });
-
   it('nextFireAfter exposes parsed cron schedule', () => {
     const sched = new Scheduler({
       cron: '0 12 * * *',

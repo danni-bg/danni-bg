@@ -21,7 +21,8 @@ export type LlmSetting = z.infer<typeof llmSettingSchema>;
 /** Platform toggles (extensible). */
 export const togglesSchema = z
   .object({
-    freshnessSloSeconds: z.number().int().positive().optional(),
+    // NB: freshness SLO is owned solely by `config.store.freshnessSloSeconds` (spec 056 FR-387 removed
+    // the never-read toggle duplicate); do not re-add it here without a reader.
     chatEnabled: z.boolean().optional(),
     // Default per-user chat-token quota; 0 (or unset) = unlimited. A user's own `token_limit` overrides.
     defaultTokenLimit: z.number().int().nonnegative().optional(),

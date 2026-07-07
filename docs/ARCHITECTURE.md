@@ -247,7 +247,7 @@ Vectors are stored as plain BLOBs; similarity search is in-process cosine + Reci
 }
 ```
 
-`scope` (empty = the whole portal) selects which datasets to mirror. `schedule` drives recurring runs with overlap prevention via the `sync_runs_lock`.
+`scope` (empty = the whole portal) selects which datasets to mirror. `schedule` drives recurring runs with overlap prevention via the `sync_runs_lock`. The cron expression fires in the **server's local time** (there is no `timezone` knob — spec 056 FR-388); `onOverlap` accepts only `"skip"` (a fire that overlaps a still-running one is skipped — spec 056 FR-389 removed the indistinguishable `"queue"`).
 
 ---
 

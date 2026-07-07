@@ -62,14 +62,20 @@ export class TenantsRepo {
     );
   }
 
-  /** All tenants (newest first) with their member count — backs the super-admin org list. */
-  listAll(): (TenantRow & { memberCount: number })[] {
+  /** Tenants (newest first) with their member count — bounded + pageable (spec 056 FR-392). */
+  listAll(limit = 100, offset = 0): (TenantRow & { memberCount: number })[] {
     return this.db
-      .query<TenantRow & { memberCount: number }, []>(
+      .query<TenantRow & { memberCount: number }, [number, number]>(
         `SELECT t.*, (SELECT COUNT(*) FROM tenant_members m WHERE m.tenant_id = t.id) AS memberCount
-         FROM tenants t ORDER BY t.created_at DESC`,
+         FROM tenants t ORDER BY t.created_at DESC LIMIT ? OFFSET ?`,
       )
-      .all();
+      .all(limit, offset);
+  }
+
+  /** Total tenants (drives the super-admin `/tenants` `total`, spec 056 FR-392). */
+  countAll(): number {
+    const row = this.db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM tenants').get();
+    return row?.n ?? 0;
   }
 
   /**

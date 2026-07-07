@@ -58,11 +58,6 @@ export const TOOLS: ToolDef[] = [
       required: ['query'],
       properties: {
         query: { type: 'string', description: 'Search text, Bulgarian or English.' },
-        lang: {
-          type: 'string',
-          enum: ['bg', 'en', 'auto'],
-          description: 'Optional language hint.',
-        },
         limit: { ...limitField, description: 'Max results (default 5).' },
       },
     },
@@ -70,7 +65,6 @@ export const TOOLS: ToolDef[] = [
       const a = z
         .object({
           query: z.string().min(1),
-          lang: z.enum(['bg', 'en', 'auto']).optional(),
           limit: z.number().int().min(1).max(50).optional(),
         })
         .parse(raw);
@@ -79,7 +73,6 @@ export const TOOLS: ToolDef[] = [
         embedder: ctx.embedder,
         query: a.query,
         freshnessSloSeconds: ctx.freshnessSloSeconds,
-        ...(a.lang !== undefined ? { lang: a.lang } : {}),
         ...(a.limit !== undefined ? { limit: a.limit } : {}),
       });
     },

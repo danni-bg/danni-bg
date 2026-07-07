@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'bun:test';
-import { openDb, vecVersion, withTransaction } from '../../../src/store/db.ts';
+import { openDb, withTransaction } from '../../../src/store/db.ts';
 
 const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
@@ -58,7 +58,9 @@ describe('store.openDb', () => {
       // operator has provisioned the extension — exercise the success path instead
       const db = openDb({ storeRoot: globalThis.__TEST_TMP_DIR__, loadVec: true });
       try {
-        expect(typeof vecVersion(db)).toBe('string');
+        // The extension loaded without throwing; a trivial query confirms the handle is usable.
+        // (`vecVersion` was removed as a dead export — spec 056 FR-391.)
+        expect(db.query<{ x: number }, []>('SELECT 1 AS x').get()?.x).toBe(1);
       } finally {
         db.close();
       }
