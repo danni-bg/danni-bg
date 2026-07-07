@@ -17,6 +17,7 @@ export interface UserRow {
   token_limit: number | null; // per-user chat-token quota override (null = platform default)
   usage_reset_at: string | null; // start of the current usage window (null = all time)
   avatar_url: string | null; // optional profile picture (data: URL); null = initials
+  active_tenant_id: string | null; // persisted active-org selection (spec 041); null = primary membership
 }
 
 export interface FindOrCreateInput {
@@ -136,6 +137,19 @@ export class UsersRepo {
     const res = this.db
       .query('UPDATE users SET avatar_url = ?, updated_at = ? WHERE id = ?')
       .run(avatarUrl, now, userId);
+    return res.changes > 0;
+  }
+
+  /**
+   * Persist (or clear, with null) the user's active-org selection (spec 041 FR-230). Validation that
+   * the tenant is one of the user's memberships is the caller's job (the switch route); this repo just
+   * stores the choice. `requireAuth` reads it and falls back to the primary membership when it is null
+   * or no longer a membership. Returns true if a row matched.
+   */
+  setActiveTenant(userId: string, tenantId: string | null, now: string = nowIso()): boolean {
+    const res = this.db
+      .query('UPDATE users SET active_tenant_id = ?, updated_at = ? WHERE id = ?')
+      .run(tenantId, now, userId);
     return res.changes > 0;
   }
 }

@@ -83,6 +83,14 @@ const createTenantBody = z.object({
   plan: z.string().trim().min(1).max(40).optional(),
 });
 
+// Super-admin member seeding (spec 041 FR-232): a platform admin may add ANY role on ANY org — unlike
+// the self-service add (member/admin only), this may set `owner` to seed a freshly created org's first
+// owner. A platform admin outranks org owners, so no owner-CALLER gate applies here.
+const adminAddMemberBody = z.object({
+  email: z.string().email(),
+  role: z.enum(['owner', 'admin', 'member']).optional(),
+});
+
 export function adminRoutes(
   users: UsersRepo,
   settings: PlatformSettingsRepo,
@@ -153,10 +161,10 @@ export function adminRoutes(
     });
   }
 
-  // Super-admin org management (spec 029 FR-132): list every org + create a new one. Reviewed for
-  // spec 036 FR-183: no member/role mutations are exposed here, so the zero-owner invariant
-  // (FR-182) cannot be violated from this surface; any future member mutation added here may bypass
-  // the owner-CALLER rule (a platform admin outranks org owners) but must keep ≥1 owner per org.
+  // Super-admin org management (spec 029 FR-132): list every org + create a new one. Member seeding
+  // (spec 041 FR-232) lets a platform admin add/remove a member on ANY org — a platform admin outranks
+  // org owners so the owner-CALLER rule is bypassed, but the zero-owner invariant (spec 036 FR-182) is
+  // still enforced on removal so a seeded org can never be left ownerless from this surface.
   if (tenants) {
     app.get('/tenants', (c) => c.json({ tenants: tenants.listAll() }));
     app.post('/tenants', async (c) => {
@@ -179,6 +187,51 @@ export function adminRoutes(
         ...(parsed.data.plan ? { plan: parsed.data.plan } : {}),
       });
       return c.json(created, 201);
+    });
+
+    // Add an existing user (by email) to any org, with any role (owner allowed — seeds the first
+    // owner). Insert-only (spec 036 FR-180): re-adding an existing member is a 409, never a role change.
+    app.post('/tenants/:id/members', async (c) => {
+      const tenant = tenants.get(c.req.param('id'));
+      if (!tenant) return c.json({ error: { code: 'not_found', message: 'no such org' } }, 404);
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: { code: 'bad_request', message: 'invalid JSON body' } }, 400);
+      }
+      const parsed = adminAddMemberBody.safeParse(body);
+      if (!parsed.success) {
+        return c.json({ error: { code: 'bad_request', message: 'invalid member request' } }, 400);
+      }
+      const invitee = users.findByEmail(parsed.data.email);
+      if (!invitee) {
+        return c.json({ error: { code: 'not_found', message: 'no user with that email' } }, 404);
+      }
+      const role = parsed.data.role ?? 'member';
+      if (!tenants.addMember(tenant.id, invitee.id, role)) {
+        return c.json(
+          { error: { code: 'already_member', message: 'user is already a member of this org' } },
+          409,
+        );
+      }
+      return c.json({ ok: true, member: { userId: invitee.id, email: invitee.email, role } }, 201);
+    });
+
+    // Remove a member from any org. The org's last owner cannot be removed (would orphan it, FR-182).
+    app.delete('/tenants/:id/members/:userId', (c) => {
+      const tenant = tenants.get(c.req.param('id'));
+      if (!tenant) return c.json({ error: { code: 'not_found', message: 'no such org' } }, 404);
+      const member = tenants.membershipOf(tenant.id, c.req.param('userId'));
+      if (!member) return c.json({ error: { code: 'not_found', message: 'no such member' } }, 404);
+      if (member.role === 'owner' && tenants.ownerCount(tenant.id) <= 1) {
+        return c.json(
+          { error: { code: 'last_owner', message: 'cannot remove the last owner' } },
+          400,
+        );
+      }
+      tenants.removeMember(tenant.id, member.userId);
+      return c.json({ ok: true });
     });
   }
 

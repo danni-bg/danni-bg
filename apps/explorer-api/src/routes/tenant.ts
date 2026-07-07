@@ -7,13 +7,19 @@ import { z } from 'zod';
 import type { TenantRole, TenantsRepo } from '../../../../src/store/repos/tenants.ts';
 import type { UsersRepo } from '../../../../src/store/repos/users.ts';
 import type { SessionResolver } from '../auth/kratos-session.ts';
-import { type AuthEnv, requireAuth, requireTenantAdmin } from '../middleware/require-auth.ts';
+import {
+  type AuthEnv,
+  requireAuth,
+  requireHuman,
+  requireTenantAdmin,
+} from '../middleware/require-auth.ts';
 
 const addMemberBody = z.object({
   email: z.string().email(),
   role: z.enum(['admin', 'member']).optional(), // a new owner is set via PATCH, not add
 });
 const setRoleBody = z.object({ role: z.enum(['owner', 'admin', 'member']) });
+const switchBody = z.object({ tenantId: z.string().min(1) });
 
 export interface TenantRoutesOpts {
   sessionResolver?: SessionResolver | undefined;
@@ -47,9 +53,43 @@ export function tenantRoutes(
   // The caller's org memberships (every org they belong to).
   app.get('/memberships', (c) => c.json({ memberships: tenants.membershipsOf(c.get('user').id) }));
 
+  // Switch the caller's active org (spec 041 FR-231) — human-session only: a key is tenant-bound and
+  // must never mutate its owner's persisted selection. The target must be one of the caller's
+  // memberships; switching elsewhere is rejected without changing the active selection.
+  app.post('/switch', requireHuman, async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: { code: 'bad_request', message: 'invalid JSON body' } }, 400);
+    }
+    const parsed = switchBody.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: { code: 'bad_request', message: 'invalid switch request' } }, 400);
+    }
+    const user = c.get('user');
+    const target = tenants.membershipOf(parsed.data.tenantId, user.id);
+    if (!target) {
+      return c.json({ error: { code: 'not_found', message: 'not a member of that org' } }, 404);
+    }
+    users.setActiveTenant(user.id, target.tenantId);
+    const t = tenants.get(target.tenantId);
+    return c.json({ ok: true, id: t?.id, slug: t?.slug, role: target.role });
+  });
+
   app.get('/members', requireTenantAdmin, (c) =>
     c.json({ members: tenants.membersOf(c.get('tenant').id) }),
   );
+
+  // Tenant-scoped API-key view for org admins (spec 041 FR-234) — views only (never hashes/secrets,
+  // consistent with spec 027). Scoped to the caller's active org, so an admin of one org can never see
+  // another org's keys (spec 029 SC-C1). Only wired when an ApiKeyRepo is present.
+  const apiKeys = opts.apiKeys;
+  if (apiKeys) {
+    app.get('/api-keys', requireTenantAdmin, (c) =>
+      c.json({ keys: apiKeys.listForTenant(c.get('tenant').id) }),
+    );
+  }
 
   // Add an EXISTING user (by email) to the active org. Org admins may add member/admin; only owners
   // promote to owner (via PATCH). The invitee must already have an account (have signed in once).

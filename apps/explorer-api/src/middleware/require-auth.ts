@@ -120,10 +120,12 @@ export function requireAuth(
       createRole,
     });
     c.set('user', user);
-    // Resolve the active org (spec 029): a freshly self-registered user is auto-joined to the default
-    // tenant; their primary membership is the active tenant. Without a TenantsRepo (focused tests),
-    // fall back to the default tenant so downstream tenant-scoping still has a value.
-    const membership = tenants?.ensureMembership(user.id);
+    // Resolve the active org (spec 029 + 041 FR-230): a freshly self-registered user is auto-joined to
+    // the default tenant. The active org is the user's PERSISTED selection (`active_tenant_id`) when it
+    // is still a membership, else their primary (oldest) membership — so a user who never switched
+    // stays on default with no behavior change (FR-235). Without a TenantsRepo (focused tests), fall
+    // back to the default tenant so downstream tenant-scoping still has a value.
+    const membership = tenants?.activeMembership(user.id, user.active_tenant_id);
     c.set('tenant', {
       id: membership?.tenantId ?? DEFAULT_TENANT_ID,
       role: membership?.role ?? 'member',

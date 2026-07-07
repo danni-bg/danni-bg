@@ -142,6 +142,18 @@ export class TenantsRepo {
     return { tenantId: DEFAULT_TENANT_ID, userId, role: 'member' };
   }
 
+  /**
+   * Resolve the caller's active membership (spec 041 FR-230): honour their persisted `preferredTenantId`
+   * selection when it is still a membership, else fall back to the primary (oldest) membership —
+   * today's behavior. Ensures ≥1 membership first, so a fresh user still lands in the default tenant.
+   * A user who never switched (null selection) resolves to their primary, unchanged (FR-235).
+   */
+  activeMembership(userId: string, preferredTenantId: string | null, now = nowIso()): Membership {
+    const primary = this.ensureMembership(userId, now);
+    if (!preferredTenantId || preferredTenantId === primary.tenantId) return primary;
+    return this.membershipOf(preferredTenantId, userId) ?? primary;
+  }
+
   /** Members of a tenant joined with their identity (for the org-admin view). */
   membersOf(tenantId: string): TenantMember[] {
     return this.db

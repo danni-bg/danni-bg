@@ -227,6 +227,160 @@ describe('Multi-tenancy (spec 029)', () => {
     expect(res.status).toBe(403); // org owner ≠ danni super-admin
   });
 
+  // Spec 041 (FR-230..235): a non-default org is actually reachable — super-admin seeds it, the user
+  // switches to it, and their new key/session/usage attribute to it. A never-switching user is
+  // unchanged (FR-235, covered by the default-tenant test above + the whole existing suite).
+  describe('tenant activation (spec 041)', () => {
+    it('SC-1: super-admin seeds an org, user switches, and a new key carries that org', async () => {
+      const superAdmin = mkUser('root@danni.bg', 'admin');
+      // A fresh org + a fresh user. The user makes a first gated request so ensureMembership auto-joins
+      // them to the default tenant (their primary) BEFORE the org is seeded — mirroring a real
+      // self-registered user who later gets added to a second org.
+      const initech = s.tenants.create({ name: 'Initech', slug: 'initech', plan: 'enterprise' });
+      const u = mkUser('peter@initech.test');
+      const before = (await (await s.app.request('/api/tenant', { headers: h(u) })).json()) as {
+        slug: string;
+      };
+      expect(before.slug).toBe('default');
+
+      // Super-admin seeds the org's first owner via /api/admin.
+      const seed = await s.app.request(`/api/admin/tenants/${initech.id}/members`, {
+        method: 'POST',
+        headers: h(superAdmin),
+        body: JSON.stringify({ email: 'peter@initech.test', role: 'owner' }),
+      });
+      expect(seed.status).toBe(201);
+
+      // The user switches their active org to Initech.
+      const sw = await s.app.request('/api/tenant/switch', {
+        method: 'POST',
+        headers: h(u),
+        body: JSON.stringify({ tenantId: initech.id }),
+      });
+      expect(sw.status).toBe(200);
+      const after = (await (await s.app.request('/api/tenant', { headers: h(u) })).json()) as {
+        slug: string;
+        role: string;
+      };
+      expect(after.slug).toBe('initech');
+      expect(after.role).toBe('owner');
+
+      // A new key now belongs to Initech (FR-233), not the default org.
+      const key = await s.app.request('/api/me/api-keys', {
+        method: 'POST',
+        headers: h(u),
+        body: JSON.stringify({ name: 'initech-key' }),
+      });
+      expect(key.status).toBe(201);
+      expect(s.apiKeys.listForTenant(initech.id)).toHaveLength(1);
+
+      // A keyed data request meters usage against the key's tenant (Initech) — the metering gate
+      // records before the route handler runs, so the empty hermetic bridge doesn't matter. The org
+      // then rolls up under Initech in the super-admin byTenant view (SC-1).
+      const keyBody = (await key.json()) as { key: string };
+      await s.app.request('/api/regions', {
+        headers: { authorization: `Bearer ${keyBody.key}` },
+      });
+      const rollup = (await (
+        await s.app.request('/api/admin/api-usage', { headers: h(superAdmin) })
+      ).json()) as { byTenant: { tenantId: string; data: number }[] };
+      const initechRow = rollup.byTenant.find((t) => t.tenantId === initech.id);
+      expect(initechRow?.data).toBeGreaterThanOrEqual(1);
+    });
+
+    it('SC-2: switching to a non-membership org is rejected and leaves the selection unchanged', async () => {
+      // ownerA belongs to Acme only; switching to Globex must fail and keep them on Acme.
+      const res = await s.app.request('/api/tenant/switch', {
+        method: 'POST',
+        headers: h(ownerA),
+        body: JSON.stringify({ tenantId: globex.id }),
+      });
+      expect(res.status).toBe(404);
+      const active = (await (
+        await s.app.request('/api/tenant', { headers: h(ownerA) })
+      ).json()) as { slug: string };
+      expect(active.slug).toBe('acme');
+    });
+
+    it('a stale persisted selection falls back to the primary membership (FR-230)', async () => {
+      // Persist a selection then remove that membership: the active org falls back, no error.
+      s.tenants.addMember(globex.id, ownerA.id, 'member');
+      const sw = await s.app.request('/api/tenant/switch', {
+        method: 'POST',
+        headers: h(ownerA),
+        body: JSON.stringify({ tenantId: globex.id }),
+      });
+      expect(sw.status).toBe(200);
+      s.tenants.removeMember(globex.id, ownerA.id);
+      const active = (await (
+        await s.app.request('/api/tenant', { headers: h(ownerA) })
+      ).json()) as { slug: string };
+      expect(active.slug).toBe('acme'); // fell back to the primary (oldest) membership
+    });
+
+    it('SC-3: FR-234 org admin sees exactly their org’s keys; a member and another org’s admin are refused', async () => {
+      // ownerA (Acme owner) mints a key for Acme, then reads the tenant-scoped key view.
+      await s.app.request('/api/me/api-keys', {
+        method: 'POST',
+        headers: h(ownerA),
+        body: JSON.stringify({ name: 'acme-key' }),
+      });
+      const view = await s.app.request('/api/tenant/api-keys', { headers: h(ownerA) });
+      expect(view.status).toBe(200);
+      const body = (await view.json()) as { keys: { name: string }[] };
+      expect(body.keys.map((k) => k.name)).toEqual(['acme-key']);
+
+      // A plain member of Acme is refused (requireTenantAdmin).
+      s.tenants.addMember(acme.id, memberC.id, 'member');
+      const asMember = await s.app.request('/api/tenant/api-keys', { headers: h(memberC) });
+      expect(asMember.status).toBe(403);
+
+      // Globex's owner sees only Globex's keys (none) — never Acme's (SC-C1 boundary).
+      const asOther = await s.app.request('/api/tenant/api-keys', { headers: h(ownerB) });
+      expect(asOther.status).toBe(200);
+      expect(((await asOther.json()) as { keys: unknown[] }).keys).toHaveLength(0);
+    });
+
+    it('FR-232: super-admin cannot remove the last owner; a co-owner is removable', async () => {
+      const superAdmin = mkUser('root@danni.bg', 'admin');
+      const last = await s.app.request(`/api/admin/tenants/${acme.id}/members/${ownerA.id}`, {
+        method: 'DELETE',
+        headers: h(superAdmin),
+      });
+      expect(last.status).toBe(400);
+      expect(s.tenants.ownerCount(acme.id)).toBe(1);
+
+      const coOwner = mkUser('co@acme.test');
+      s.tenants.addMember(acme.id, coOwner.id, 'owner');
+      const rm = await s.app.request(`/api/admin/tenants/${acme.id}/members/${coOwner.id}`, {
+        method: 'DELETE',
+        headers: h(superAdmin),
+      });
+      expect(rm.status).toBe(200);
+      expect(s.tenants.membershipOf(acme.id, coOwner.id)).toBeNull();
+    });
+
+    it('FR-232: super-admin member-add is insert-only (re-adding a member is a 409)', async () => {
+      const superAdmin = mkUser('root@danni.bg', 'admin');
+      const again = await s.app.request(`/api/admin/tenants/${acme.id}/members`, {
+        method: 'POST',
+        headers: h(superAdmin),
+        body: JSON.stringify({ email: 'a@acme.test', role: 'member' }),
+      });
+      expect(again.status).toBe(409);
+      expect(s.tenants.membershipOf(acme.id, ownerA.id)?.role).toBe('owner'); // role untouched
+    });
+
+    it('a non-admin cannot reach super-admin member seeding', async () => {
+      const res = await s.app.request(`/api/admin/tenants/${globex.id}/members`, {
+        method: 'POST',
+        headers: h(ownerA),
+        body: JSON.stringify({ email: 'a@acme.test', role: 'owner' }),
+      });
+      expect(res.status).toBe(403);
+    });
+  });
+
   // Spec 036 (FR-180..184): owner protection on every member-mutation path. SC-1: no sequence of
   // /api/tenant calls by a non-owner admin changes an owner's role; SC-2: an org never reaches zero
   // owners; SC-3: adding a genuinely new member keeps working (covered by the SC-C1 test above).
