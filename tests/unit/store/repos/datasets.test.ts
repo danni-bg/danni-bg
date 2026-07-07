@@ -69,6 +69,26 @@ describe('store.repos.datasets', () => {
     expect(fields).toContain('metadata_modified');
   });
 
+  it('re-upsert with identical values records no changes (change-tracking survives the wrapping tx, FR-343)', () => {
+    const repo = new DatasetsRepo(database);
+    const input = {
+      id: 'd1',
+      slug: 'one',
+      titleBg: 'A',
+      descriptionBg: 'd',
+      tags: ['a'],
+      groups: ['g'],
+      sourceUrl: 'https://example.org/d1',
+      metadataModified: '2026-05-08T00:00:00Z',
+    };
+    repo.upsert(input);
+    const again = repo.upsert(input);
+    expect(again.inserted).toBe(false);
+    expect(again.changes.length).toBe(0); // unchanged upsert does not fabricate a change
+    const changed = repo.upsert({ ...input, titleBg: 'A2' });
+    expect(changed.changes.map((c) => c.field)).toEqual(['title_bg']);
+  });
+
   it('updates lifecycle and timestamp on transition', () => {
     const repo = new DatasetsRepo(database);
     repo.upsert({

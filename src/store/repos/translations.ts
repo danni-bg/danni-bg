@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import { nowIso } from '../../lib/time.ts';
+import { withTransaction } from '../db.ts';
 
 export type TranslationSubjectKind =
   | 'dataset_title'
@@ -31,7 +32,14 @@ export interface UpsertTranslationInput {
 export class TranslationsRepo {
   constructor(private readonly db: Database) {}
 
+  // The keep-non-empty rule (below) diffs the stored `text_en` before writing, so per spec 052 FR-343
+  // the read (`findExact`) and the write run in ONE transaction — the diff can't be computed against a
+  // row a second writer changed between read and write.
   upsert(input: UpsertTranslationInput): TranslationRow {
+    return withTransaction(this.db, () => this.upsertInTx(input));
+  }
+
+  private upsertInTx(input: UpsertTranslationInput): TranslationRow {
     const at = input.createdAt ?? nowIso();
     const existing = this.findExact(input.subjectKind, input.subjectId, input.translator);
     if (existing) {

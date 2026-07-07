@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runMigrations } from '../../../../src/store/migrate.ts';
@@ -65,5 +66,28 @@ describe('store.repos.dataset-links', () => {
     });
     expect(s.repo.forDataset('d1').length).toBe(1);
     expect(s.repo.forDataset('d2').length).toBe(1);
+  });
+
+  it('re-insert is idempotent and updates in place (ON CONFLICT DO UPDATE, spec 052 FR-342)', () => {
+    const base = { datasetA: 'd1', datasetB: 'd2', viaEntityId: 'tag:x', heuristic: 'shared_tag' };
+    s.repo.insert({ ...base, confidence: 0.5 });
+    s.repo.insert({ ...base, confidence: 0.9 });
+    const links = s.repo.forDataset('d1');
+    expect(links.length).toBe(1); // same PK → in-place update, not a duplicate row
+    expect(links[0]?.confidence).toBe(0.9);
+  });
+});
+
+// SC-2 guard: the repo layer holds ONE upsert idiom (spec 052 FR-342) — no `INSERT OR REPLACE`
+// anywhere under src/store/repos; conflicting writes use `ON CONFLICT DO UPDATE`.
+describe('store.repos upsert-idiom convention (spec 052 SC-2)', () => {
+  it('no repo uses INSERT OR REPLACE', () => {
+    const reposDir = fileURLToPath(new URL('../../../../src/store/repos/', import.meta.url));
+    // Match the SQL statement (`INSERT OR REPLACE INTO ...`), not prose in doc comments that name the
+    // discouraged idiom — the real usage always carries the `INTO` clause.
+    const offenders = readdirSync(reposDir)
+      .filter((f) => f.endsWith('.ts'))
+      .filter((f) => /insert\s+or\s+replace\s+into/i.test(readFileSync(join(reposDir, f), 'utf-8')));
+    expect(offenders).toEqual([]);
   });
 });

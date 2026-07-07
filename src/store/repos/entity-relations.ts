@@ -24,13 +24,19 @@ export interface UpsertRelationInput {
 export class EntityRelationsRepo {
   constructor(private readonly db: Database) {}
 
-  /** Idempotent: a triple (subject, predicate, object) is unique; re-asserting refreshes it. */
+  /** Idempotent: a triple (subject, predicate, object) is unique; re-asserting refreshes it. Uses
+   *  `ON CONFLICT DO UPDATE`, not `INSERT OR REPLACE` (spec 052 FR-342): a single atomic in-place
+   *  update instead of delete+reinsert. */
   upsert(input: UpsertRelationInput): void {
     this.db
       .query(
-        `INSERT OR REPLACE INTO entity_relations
+        `INSERT INTO entity_relations
            (subject_id, predicate, object_id, confidence, evidence_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(subject_id, predicate, object_id) DO UPDATE SET
+           confidence = excluded.confidence,
+           evidence_json = excluded.evidence_json,
+           created_at = excluded.created_at`,
       )
       .run(
         input.subjectId,

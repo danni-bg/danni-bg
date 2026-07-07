@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import { z } from 'zod';
 import { nowIso } from '../../lib/time.ts';
+import { withTransaction } from '../db.ts';
 
 export const DatasetTagsSchema = z.array(z.string());
 export const DatasetGroupsSchema = z.array(z.string());
@@ -74,7 +75,15 @@ const TRACKED_FIELDS: Array<{
 export class DatasetsRepo {
   constructor(private readonly db: Database) {}
 
+  // This upsert must diff old vs. new to emit field-level `changes` (the revision trail), so it can't
+  // be a single `ON CONFLICT` statement. Per spec 052 FR-343 the read (`get`) and the write run in ONE
+  // transaction (a savepoint when a caller like `capture-dataset.ts` already opened one), so the diff
+  // can never be computed against a row a second writer changed between read and write.
   upsert(input: UpsertDatasetInput): UpsertDatasetResult {
+    return withTransaction(this.db, () => this.upsertInTx(input));
+  }
+
+  private upsertInTx(input: UpsertDatasetInput): UpsertDatasetResult {
     const now = input.now ?? nowIso();
     const existing = this.get(input.id);
     const tagsJson = JSON.stringify(input.tags);

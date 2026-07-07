@@ -42,7 +42,7 @@ describe('enrich.register-entities', () => {
     const dataset = datasets.get('d1');
     if (!dataset) throw new Error('seed missing');
     const result = await registerEntities(
-      { repo, extractors: [new CkanTagsExtractor(), new CkanGroupsExtractor()] },
+      { db: s.db, repo, extractors: [new CkanTagsExtractor(), new CkanGroupsExtractor()] },
       { dataset, resources: [] },
     );
     expect(result.attached).toBe(3); // 2 tags + 1 group
@@ -57,13 +57,38 @@ describe('enrich.register-entities', () => {
     const dataset = datasets.get('d1');
     if (!dataset) throw new Error('seed missing');
     await registerEntities(
-      { repo, extractors: [new CkanTagsExtractor()] },
+      { db: s.db, repo, extractors: [new CkanTagsExtractor()] },
       { dataset, resources: [] },
     );
     await registerEntities(
-      { repo, extractors: [new CkanTagsExtractor()] },
+      { db: s.db, repo, extractors: [new CkanTagsExtractor()] },
       { dataset, resources: [] },
     );
     expect(repo.listAttachments('d1').length).toBe(2);
+  });
+
+  it('rolls back the entity upsert when attach faults mid-unit (spec 052 FR-345)', async () => {
+    const repo = new EntitiesRepo(s.db);
+    const datasets = new DatasetsRepo(s.db);
+    const dataset = datasets.get('d1');
+    if (!dataset) throw new Error('seed missing');
+    // Fault-inject a crash between the entity upsert and its attach. The two now run in ONE
+    // transaction, so the whole unit MUST roll back — no entity row survives without its attachment.
+    const orig = EntitiesRepo.prototype.attach;
+    EntitiesRepo.prototype.attach = () => {
+      throw new Error('attach fault');
+    };
+    try {
+      await expect(
+        registerEntities(
+          { db: s.db, repo, extractors: [new CkanTagsExtractor()] },
+          { dataset, resources: [] },
+        ),
+      ).rejects.toThrow('attach fault');
+    } finally {
+      EntitiesRepo.prototype.attach = orig;
+    }
+    expect(s.db.query<{ c: number }, []>('SELECT count(*) AS c FROM entities').get()?.c).toBe(0);
+    expect(repo.listAttachments('d1').length).toBe(0);
   });
 });

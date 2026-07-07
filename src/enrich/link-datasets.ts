@@ -1,7 +1,10 @@
+import type { Database } from 'bun:sqlite';
+import { withTransaction } from '../store/db.ts';
 import type { DatasetLinksRepo } from '../store/repos/dataset-links.ts';
 import type { EntitiesRepo, EntityKind } from '../store/repos/entities.ts';
 
 export interface LinkOptions {
+  db: Database;
   entitiesRepo: EntitiesRepo;
   linksRepo: DatasetLinksRepo;
 }
@@ -45,21 +48,26 @@ export function linkDatasetsForEntity(opts: LinkOptions, entityId: string): Link
   const datasets = opts.entitiesRepo.datasetsForEntity(entityId);
   if (datasets.length > MAX_ENTITY_FANOUT) return { created: 0, skippedHubs: 1 };
   let created = 0;
-  for (let i = 0; i < datasets.length; i++) {
-    for (let j = i + 1; j < datasets.length; j++) {
-      const a = datasets[i];
-      const b = datasets[j];
-      if (typeof a !== 'string' || typeof b !== 'string') continue;
-      opts.linksRepo.insert({
-        datasetA: a,
-        datasetB: b,
-        viaEntityId: entityId,
-        heuristic: HEURISTIC_BY_KIND[ent.kind],
-        confidence: CONFIDENCE_BY_KIND[ent.kind],
-      });
-      created++;
+  // One entity's up-to-~1.2k pairwise links are one logical unit: write them in a SINGLE transaction
+  // (spec 052 FR-341) — per-entity atomicity plus one WAL commit/fsync instead of one per link (the
+  // old ~10^5-fsync cost across a full-mirror run). `linkAllSharedEntities` stays a loop of these.
+  withTransaction(opts.db, () => {
+    for (let i = 0; i < datasets.length; i++) {
+      for (let j = i + 1; j < datasets.length; j++) {
+        const a = datasets[i];
+        const b = datasets[j];
+        if (typeof a !== 'string' || typeof b !== 'string') continue;
+        opts.linksRepo.insert({
+          datasetA: a,
+          datasetB: b,
+          viaEntityId: entityId,
+          heuristic: HEURISTIC_BY_KIND[ent.kind],
+          confidence: CONFIDENCE_BY_KIND[ent.kind],
+        });
+        created++;
+      }
     }
-  }
+  });
   return { created, skippedHubs: 0 };
 }
 

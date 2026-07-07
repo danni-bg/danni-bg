@@ -157,7 +157,7 @@ export async function runCurate(opts: RunCurateOptions): Promise<RunCurateResult
     }
 
     const result = await registerEntities(
-      { repo: entitiesRepo, extractors },
+      { db: opts.db, repo: entitiesRepo, extractors },
       { dataset, resources },
     );
     entitiesAttached += result.attached;
@@ -187,7 +187,7 @@ export async function runCurate(opts: RunCurateOptions): Promise<RunCurateResult
   }
 
   const linkResult = linkAllSharedEntities(
-    { entitiesRepo, linksRepo },
+    { db: opts.db, entitiesRepo, linksRepo },
     Array.from(touchedEntityIds),
   );
 
