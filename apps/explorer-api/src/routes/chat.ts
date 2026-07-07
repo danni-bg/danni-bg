@@ -12,7 +12,12 @@ import { z } from 'zod';
 import { estimateCost, pricingFor } from '../../../../src/lib/llm-cost.ts';
 import type { TokenUsageRepo } from '../../../../src/store/repos/token-usage.ts';
 import type { UserRow } from '../../../../src/store/repos/users.ts';
-import type { GenEvent, GenSnapshot, GenerationManager } from '../chat/generation-manager.ts';
+import type {
+  GenEvent,
+  GenSnapshot,
+  GenerationManager,
+  UsageInfo,
+} from '../chat/generation-manager.ts';
 import { billableTokens, effectiveLimit, quotaView } from '../chat/quota.ts';
 import { runChatTurn } from '../chat/run.ts';
 import { type ConversationStore, MAX_CONTEXT_DATASETS, windowMessages } from '../chat/session.ts';
@@ -61,6 +66,16 @@ export interface ChatRouteDeps {
   metrics?: Metrics;
 }
 
+/**
+ * When the user's token window next resets to zero, if that time is knowable — else null. Token resets
+ * are currently manual/admin-only (spec 021: `usage_reset_at` records the window START and only moves
+ * on an admin reset), so there is no scheduled end to advertise and this returns null. The seam stays
+ * so a future scheduled-reset feature sets a real Retry-After without touching the 429 shape (FR-212).
+ */
+function quotaResetsAt(_user: UserRow): string | null {
+  return null;
+}
+
 export function chatHandler(deps: ChatRouteDeps) {
   return async (c: Context): Promise<Response> => {
     let body: z.infer<typeof chatRequestSchema>;
@@ -86,12 +101,21 @@ export function chatHandler(deps: ChatRouteDeps) {
       const { used, cached } = deps.usage.usageForUser(user.id, user.usage_reset_at);
       const billable = billableTokens(used, cached, deps.cacheWeight?.());
       if (quotaView(billable, limit).exceeded) {
+        // FR-212 (spec 039): a quota 429 must be a correct HTTP citizen. Set Retry-After whenever the
+        // reset time is knowable; while token resets stay manual/admin-only (`users.usage_reset_at`
+        // marks the window START, not a scheduled end — spec 021), no such time exists, so state that
+        // explicitly via `resetsAt: null` rather than silently omitting retry semantics.
+        const resetsAt = quotaResetsAt(user);
+        if (resetsAt) {
+          const secs = Math.max(1, Math.ceil((Date.parse(resetsAt) - Date.now()) / 1000));
+          c.header('Retry-After', String(secs));
+        }
         return c.json(
           {
             error: {
               code: 'quota_exceeded',
               message: 'token quota exceeded',
-              details: { used: billable, limit },
+              details: { used: billable, limit, resetsAt },
             },
           },
           429,
@@ -184,6 +208,38 @@ export function chatHandler(deps: ChatRouteDeps) {
           }
           h.onTool(name, status);
         };
+        // FR-210/211 (spec 039): meter the tokens the provider actually billed on EVERY exit — success,
+        // provider/tool error, user stop, abort — not just the success path. `onStepFinish` already
+        // accumulates per-step usage (surfaced via onUsage), so keep the latest here and record it if
+        // the turn throws; the success path records the authoritative reconciled total instead. `meter`
+        // fires at most once per turn so the two never double-count (FR-211). This `run` executes once
+        // per generation, and reconnect/stream only replays events, so a resumed turn can't re-meter
+        // (FR-214).
+        let lastUsage: UsageInfo | undefined;
+        let metered = false;
+        const meter = (usage: (UsageInfo & { totalTokens?: number }) | undefined): void => {
+          if (metered || !deps.usage || !user || !usage) return;
+          metered = true;
+          deps.usage.record({
+            userId: user.id,
+            ...(tenantId ? { tenantId } : {}),
+            sessionId: conv.sessionId,
+            model: modelId,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            totalTokens: usage.totalTokens ?? usage.inputTokens + usage.outputTokens,
+            cachedInputTokens: usage.cachedInputTokens,
+          });
+        };
+        const onUsage = (usage: UsageInfo): void => {
+          // Keep the PEAK accumulation, not merely the latest: run.ts re-emits an authoritative final
+          // total after the stream, but a graceful abort resolves that to 0 — which must not erase the
+          // tokens already streamed/billed (FR-210).
+          const total = usage.inputTokens + usage.outputTokens;
+          const prev = (lastUsage?.inputTokens ?? 0) + (lastUsage?.outputTokens ?? 0);
+          if (!lastUsage || total >= prev) lastUsage = usage;
+          h.onUsage(usage);
+        };
         let result: Awaited<ReturnType<typeof runChatTurn>>;
         try {
           result = await runChatTurn({
@@ -194,11 +250,14 @@ export function chatHandler(deps: ChatRouteDeps) {
             groundingDatasetIds,
             abortSignal: signal,
             ...(maxOut ? { maxOutputTokens: maxOut } : {}),
-            events: { onToken: h.onToken, onTool, onUsage: h.onUsage },
+            events: { onToken: h.onToken, onTool, onUsage },
           });
         } catch (e) {
           deps.metrics?.recordChatOutcome('error');
           turnSpan.end({ ok: false });
+          // Record the tokens billed before the failure — the provider already charged for every
+          // completed step; dropping them is the metering leak this spec closes.
+          meter(lastUsage);
           throw e;
         }
         const durationMs = Date.now() - startedAt;
@@ -243,18 +302,12 @@ export function chatHandler(deps: ChatRouteDeps) {
             : {}),
           durationMs,
         });
-        if (deps.usage && user && result.usage) {
-          deps.usage.record({
-            userId: user.id,
-            ...(tenantId ? { tenantId } : {}),
-            sessionId: conv.sessionId,
-            model: modelId,
-            inputTokens: result.usage.inputTokens,
-            outputTokens: result.usage.outputTokens,
-            totalTokens: result.usage.totalTokens,
-            cachedInputTokens: result.usage.cachedInputTokens,
-          });
-        }
+        // The reconciled total wins over the per-step accumulation (FR-211) — but never meter LESS than
+        // what the provider already streamed: a user stop that streamText resolves gracefully can report
+        // totalUsage 0 while steps were already billed, so fall back to the accumulation then (FR-210).
+        const finalTotal = result.usage?.totalTokens ?? 0;
+        const accTotal = (lastUsage?.inputTokens ?? 0) + (lastUsage?.outputTokens ?? 0);
+        meter(result.usage && finalTotal >= accTotal ? result.usage : lastUsage);
         const nextContext =
           explicitFocus.length > 0
             ? explicitFocus
