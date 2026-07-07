@@ -17,6 +17,7 @@ COMMANDS
   mirror-info   Print the curated-dataset record for a single dataset
   mcp           Run a read-only MCP server over stdio (for LLM-agent consumers)
   admin         Manage user tiers (grant | revoke | list) — e.g. danni admin grant <email>
+  backup        Write a verified snapshot of the live store — e.g. danni backup <dest>
 
 FLAGS
   --help        Show this help
@@ -38,6 +39,7 @@ const commandLoaders: Record<string, () => Promise<{ run: CommandHandler }>> = {
   'mirror-info': () => import('./mirror-info.ts').then((m) => ({ run: m.run })),
   mcp: () => import('./mcp.ts').then((m) => ({ run: m.run })),
   admin: () => import('./admin.ts').then((m) => ({ run: m.run })),
+  backup: () => import('./backup.ts').then((m) => ({ run: m.run })),
 };
 
 export async function main(argv: string[]): Promise<number> {
