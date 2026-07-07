@@ -172,10 +172,7 @@ describe('POST /api/chat', () => {
     const res = await app.request('/api/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        message: 'hi',
-        provider: { kind: 'openai-compatible', model: 'm', apiKey: 'x' },
-      }),
+      body: JSON.stringify({ message: 'hi' }),
     });
     expect(res.status).toBe(401);
     const body = (await res.json()) as { error: { code: string } };
@@ -189,7 +186,6 @@ describe('POST /api/chat', () => {
     ]);
     const res = await post(appWith(model), {
       message: 'Кои региони публикуват данни за въздуха?',
-      provider: { kind: 'openai-compatible', model: 'm', apiKey: 'x' },
     });
     const events = parseSSE(await res.text());
     const kinds = events.map((e) => e.event);
@@ -216,9 +212,8 @@ describe('POST /api/chat', () => {
       textStep('А ето още по темата.'),
     ]);
     const app = appWith(model);
-    const provider = { kind: 'openai-compatible', model: 'm', apiKey: 'x' };
 
-    const r1 = parseSSE(await (await post(app, { message: 'q1', provider })).text());
+    const r1 = parseSSE(await (await post(app, { message: 'q1' })).text());
     const sid = (r1.find((e) => e.event === 'session')?.data as { sessionId: string }).sessionId;
     expect(
       (
@@ -226,9 +221,7 @@ describe('POST /api/chat', () => {
       ).citations.map((cite) => cite.datasetId),
     ).toEqual(['d1']);
 
-    const r2 = parseSSE(
-      await (await post(app, { sessionId: sid, message: 'q2', provider })).text(),
-    );
+    const r2 = parseSSE(await (await post(app, { sessionId: sid, message: 'q2' })).text());
     expect(
       (
         r2.find((e) => e.event === 'citations')?.data as { citations: { datasetId: string }[] }
@@ -241,7 +234,6 @@ describe('POST /api/chat', () => {
     const res = await post(appWith(mockModel([textStep('Ето данните за този набор.')])), {
       message: 'какво има тук?',
       groundingDatasetIds: ['d1'],
-      provider: { kind: 'openai-compatible', model: 'm', apiKey: 'x' },
     });
     const events = parseSSE(await res.text());
     expect(
@@ -258,7 +250,6 @@ describe('POST /api/chat', () => {
       message: 'какво има тук?',
       groundingDatasetIds: ['d1'],
       debug: true,
-      provider: { kind: 'openai-compatible', model: 'm', apiKey: 'x' },
     });
     const events = parseSSE(await res.text());
     const grounding = events.find((e) => e.event === 'grounding')?.data as
@@ -269,10 +260,7 @@ describe('POST /api/chat', () => {
 
   it('replies "no relevant public data" when the model produces no text', async () => {
     const model = mockModel([emptyStep()]);
-    const res = await post(appWith(model), {
-      message: 'нещо',
-      provider: { kind: 'anthropic', model: 'm', apiKey: 'x' },
-    });
+    const res = await post(appWith(model), { message: 'нещо' });
     const events = parseSSE(await res.text());
     expect(events.find((e) => e.event === 'citations')?.data).toEqual({ citations: [] });
   });
@@ -282,7 +270,6 @@ describe('POST /api/chat', () => {
     const res = await post(appWith(model), {
       message: 'q',
       scope: { geoUnitIds: ['geo:bg-oblast-varna'] },
-      provider: { kind: 'openai-compatible', model: 'm', apiKey: 'x' },
     });
     const events = parseSSE(await res.text());
     expect(events.find((e) => e.event === 'citations')?.data).toEqual({ citations: [] });
@@ -292,7 +279,7 @@ describe('POST /api/chat', () => {
     const app = appWith(() => {
       throw new ProviderError('provider_unconfigured', 'no key');
     });
-    const res = await post(app, { message: 'q', provider: { kind: 'anthropic', model: 'm' } });
+    const res = await post(app, { message: 'q' });
     const events = parseSSE(await res.text());
     const e = events.find((x) => x.event === 'error')?.data as { code: string };
     expect(e.code).toBe('provider_unconfigured');
@@ -300,18 +287,82 @@ describe('POST /api/chat', () => {
 
   it('rejects an invalid body with 400', async () => {
     const model = mockModel([emptyStep()]);
-    const res = await post(appWith(model), {
-      provider: { kind: 'anthropic', model: 'm', apiKey: 'x' },
-    });
+    const res = await post(appWith(model), { debug: true });
     expect(res.status).toBe(400);
+  });
+
+  it('rejects a request still sending the removed provider field with 400 and never dials its baseUrl (FR-170/FR-174, SC-1)', async () => {
+    // A stale/malicious client pointing the (removed) provider at a live listener must get a schema
+    // rejection — and the listener must see ZERO connections: the server is not an egress proxy.
+    let connections = 0;
+    const listener = Bun.serve({
+      port: 0,
+      fetch: () => {
+        connections += 1;
+        return new Response('should never be reached');
+      },
+    });
+    try {
+      const res = await post(appWith(mockModel([textStep('не')])), {
+        message: 'q',
+        provider: {
+          kind: 'openai-compatible',
+          model: 'm',
+          apiKey: 'x',
+          baseUrl: `http://127.0.0.1:${listener.port}/v1`,
+        },
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe('bad_request');
+    } finally {
+      listener.stop(true);
+    }
+    expect(connections).toBe(0);
+  });
+
+  it('resolves the model from server config only — no request-derived arguments reach the seam (FR-171, SC-2)', async () => {
+    const model = mockModel([textStep('ok')]);
+    const seamCalls: unknown[][] = [];
+    const ctx: AppContext = {
+      bridge,
+      crosswalk: new Crosswalk(loadCrosswalk()),
+      users: new UsersRepo(db),
+      health: () => ({ lastSyncedAt: null, isStale: true, defaultProvider: 'absent' }),
+      chat: {
+        sessions: new SessionStore(() => 'sess-1'),
+        serverDefault: null,
+        selectModel: (...args: unknown[]) => {
+          seamCalls.push(args);
+          return model as unknown as LanguageModel;
+        },
+      },
+    };
+    const res = await post(createApp(ctx), { message: 'q' });
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(seamCalls).toEqual([[]]);
+  });
+
+  it('emits provider_unconfigured via the REAL seam when no server provider exists, with no fabricated content (FR-173)', async () => {
+    // No selectModel override and no settings repo: the real provider seam resolves the server
+    // default (null here) and must fail typed — never with invented answer text.
+    const ctx: AppContext = {
+      bridge,
+      crosswalk: new Crosswalk(loadCrosswalk()),
+      users: new UsersRepo(db),
+      health: () => ({ lastSyncedAt: null, isStale: true, defaultProvider: 'absent' }),
+      chat: { sessions: new SessionStore(() => 'sess-1'), serverDefault: null },
+    };
+    const events = parseSSE(await (await post(createApp(ctx), { message: 'q' })).text());
+    const e = events.find((x) => x.event === 'error')?.data as { code: string };
+    expect(e.code).toBe('provider_unconfigured');
+    expect(events.some((x) => x.event === 'token')).toBe(false);
   });
 
   it('emits a provider_error event when the model stream errors mid-turn', async () => {
     const model = mockModel([errorStep()]);
-    const res = await post(appWith(model), {
-      message: 'q',
-      provider: { kind: 'anthropic', model: 'm', apiKey: 'x' },
-    });
+    const res = await post(appWith(model), { message: 'q' });
     const events = parseSSE(await res.text());
     const e = events.find((x) => x.event === 'error')?.data as { code: string };
     expect(e.code).toBe('provider_error');
@@ -319,10 +370,7 @@ describe('POST /api/chat', () => {
 
   it('handles a non-Error stream error value', async () => {
     const model = mockModel([errorStep('plain string failure')]);
-    const res = await post(appWith(model), {
-      message: 'q',
-      provider: { kind: 'anthropic', model: 'm', apiKey: 'x' },
-    });
+    const res = await post(appWith(model), { message: 'q' });
     const events = parseSSE(await res.text());
     expect(events.find((x) => x.event === 'error')?.event).toBe('error');
   });

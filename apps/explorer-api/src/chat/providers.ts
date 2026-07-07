@@ -1,24 +1,15 @@
-// Provider seam (T046/T053). Selects an AI SDK language model from the per-request ProviderConfig:
-// any OpenAI-compatible endpoint (configurable baseURL — covers OpenAI + self-hosted vLLM) or
-// Anthropic, or the server-configured default. The apiKey is used only to construct the client and
-// is never logged or persisted (FR-024). Missing/invalid config surfaces as a typed ProviderError so
-// the route can emit a clean SSE `error` event with no fabricated content (FR-023).
+// Provider seam (T046/T053, locked down in spec 035). Selects an AI SDK language model from the
+// SERVER-configured default only — admin runtime settings (spec 019) with the EXPLORER_DEFAULT_* env
+// as fallback: any OpenAI-compatible endpoint (configurable baseURL — covers OpenAI + self-hosted
+// vLLM) or Anthropic. Nothing request-derived ever reaches client construction (FR-171) — a
+// client-supplied provider would make the server an egress/SSRF proxy. The apiKey is used only to
+// construct the client and is never logged or persisted (FR-024). A missing default surfaces as a
+// typed ProviderError so the route can emit a clean SSE `error` event with no fabricated content
+// (FR-023/FR-173).
 
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import type { LanguageModelV3 } from '@ai-sdk/provider';
-import { z } from 'zod';
-
-export const providerConfigSchema = z
-  .object({
-    kind: z.enum(['openai-compatible', 'anthropic']),
-    baseUrl: z.string().nullable().optional(),
-    model: z.string().min(1),
-    apiKey: z.string().nullable().optional(),
-    useServerDefault: z.boolean().optional(),
-  })
-  .strict();
-export type ProviderConfig = z.infer<typeof providerConfigSchema>;
 
 export interface ServerDefault {
   kind: 'openai-compatible' | 'anthropic';
@@ -72,29 +63,18 @@ function build(
 }
 
 /**
- * Resolve a language model for a chat request. When `useServerDefault`, the server default is used
- * (its key from server config only); otherwise the user-supplied config is used and MUST carry a key.
+ * Resolve the language model for a chat turn from the server-configured default ONLY (FR-171).
+ * There is deliberately no per-request config parameter: the request body must never influence
+ * which endpoint the server talks to.
  */
-export function selectModel(
-  config: ProviderConfig,
-  serverDefault: ServerDefault | null,
-): LanguageModelV3 {
-  if (config.useServerDefault) {
-    if (!serverDefault) {
-      throw new ProviderError('provider_unconfigured', 'no server default provider is configured');
-    }
-    return build(
-      serverDefault.kind,
-      serverDefault.model,
-      serverDefault.baseUrl,
-      serverDefault.apiKey,
-    );
+export function selectModel(serverDefault: ServerDefault | null): LanguageModelV3 {
+  if (!serverDefault) {
+    throw new ProviderError('provider_unconfigured', 'no server default provider is configured');
   }
-  if (!config.apiKey) {
-    throw new ProviderError(
-      'provider_unconfigured',
-      'an API key is required for the selected provider',
-    );
-  }
-  return build(config.kind, config.model, config.baseUrl ?? undefined, config.apiKey);
+  return build(
+    serverDefault.kind,
+    serverDefault.model,
+    serverDefault.baseUrl,
+    serverDefault.apiKey,
+  );
 }

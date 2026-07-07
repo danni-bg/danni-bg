@@ -19,12 +19,7 @@ import { TOGGLES_SETTING_KEY, togglesSchema } from './admin/settings-schema.ts';
 import type { SessionResolver } from './auth/kratos-session.ts';
 import { capDatasetDetail } from './chat/cap.ts';
 import { GenerationManager } from './chat/generation-manager.ts';
-import {
-  type ProviderConfig,
-  type ServerDefault,
-  selectModel,
-  serverDefaultFromEnv,
-} from './chat/providers.ts';
+import { type ServerDefault, selectModel, serverDefaultFromEnv } from './chat/providers.ts';
 import { type ConversationStore, SessionStore } from './chat/session.ts';
 import type { PersistentSessionStore } from './chat/sessions-repo.ts';
 import { type DatasetLite, hasGeo, liteToPointer, matchesFiltersLite } from './dataset-lite.ts';
@@ -63,8 +58,8 @@ export interface HealthInfo {
 export interface ChatConfig {
   sessions: ConversationStore;
   serverDefault: ServerDefault | null;
-  /** Test override; when absent the real provider seam is used. */
-  selectModel?: (provider: ProviderConfig) => LanguageModel;
+  /** Test override; when absent the real provider seam (server config only, spec 035) is used. */
+  selectModel?: () => LanguageModel;
 }
 
 export interface AppContext {
@@ -215,7 +210,7 @@ export function createApp(ctx: AppContext): Hono {
       // Persistent store when wired (conversations survive + resume), else the in-memory one.
       sessions: ctx.chatSessions ?? chat.sessions,
       generations,
-      selectModel: chat.selectModel ?? ((p) => selectModel(p, resolveDefault())),
+      selectModel: chat.selectModel ?? (() => selectModel(resolveDefault())),
       ...(ctx.tokenUsage ? { usage: ctx.tokenUsage } : {}),
       defaultTokenLimit: resolveDefaultTokenLimit,
       cacheWeight: resolveCacheWeight,

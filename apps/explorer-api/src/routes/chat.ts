@@ -1,7 +1,9 @@
 // POST /api/chat — backend-mediated, grounded, streaming chat (T049). SSE event types per
 // contracts/http-api.md: session, token, tool, citations, anchors, done, error. The browser never
-// calls the LLM or the mirror tools directly (FR-016). Provider/secret handling lives in the
-// provider seam; secrets are never logged (FR-024).
+// calls the LLM or the mirror tools directly (FR-016). The provider is resolved server-side only
+// (admin runtime settings → env default, spec 035 FR-170/171): the strict request schema rejects a
+// client-supplied `provider` with 400. Secrets live in the provider seam and are never logged
+// (FR-024).
 
 import type { LanguageModel, ModelMessage } from 'ai';
 import type { Context } from 'hono';
@@ -19,7 +21,7 @@ import type { Metrics } from '../metrics.ts';
 import type { ReadBridge } from '../read-bridge.ts';
 import { scopeDescriptorSchema } from '../schemas.ts';
 import { Tracer } from '../trace.ts';
-import { type ProviderConfig, ProviderError, providerConfigSchema } from './../chat/providers.ts';
+import { ProviderError } from './../chat/providers.ts';
 
 export const chatRequestSchema = z
   .object({
@@ -32,7 +34,6 @@ export const chatRequestSchema = z
      * is a hard focus that also narrows what tools may read.
      */
     groundingDatasetIds: z.array(z.string()).optional(),
-    provider: providerConfigSchema,
     /** When true, emit a `grounding` SSE event with the exact context injected into the model.
      * For observability / offline faithfulness evals; clients don't set it in normal use. */
     debug: z.boolean().optional(),
@@ -44,7 +45,8 @@ export interface ChatRouteDeps {
   sessions: ConversationStore;
   /** Runs turns detached so they survive a client disconnect (mid-stream resume). */
   generations: GenerationManager;
-  selectModel: (provider: ProviderConfig) => LanguageModel;
+  /** Resolves the language model from server-side configuration only (spec 035 FR-171). */
+  selectModel: () => LanguageModel;
   /** Per-user token metering (optional; omitted in focused unit tests). */
   usage?: TokenUsageRepo;
   /** Resolve the platform default token quota (0/undefined = unlimited) per request. */
@@ -124,10 +126,11 @@ export function chatHandler(deps: ChatRouteDeps) {
           ? readerFocus
           : conv.contextDatasetIds;
 
-    // Resolve the model up front so provider misconfig becomes a clean error event (FR-023).
+    // Resolve the model up front — from server config only — so provider misconfig becomes a clean
+    // error event (FR-023/FR-173).
     let model: LanguageModel;
     try {
-      model = deps.selectModel(body.provider);
+      model = deps.selectModel();
     } catch (e) {
       const code = e instanceof ProviderError ? e.code : 'provider_error';
       deps.metrics?.recordChatOutcome('error');

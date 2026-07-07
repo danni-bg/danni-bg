@@ -68,5 +68,10 @@ capabilities each have their own spec:
   `apps/explorer-api/src/{readiness,metrics,trace}.ts`); the scalable IaC (Terraform/k8s/observability),
   the `OPERATIONS.md` runbook, and the OpenBao/Headscale `vault` repo are commercial.
 
+- 035 chat provider lockdown: the client-supplied `provider` (SSRF/egress vector) is removed from
+  `/api/chat` — the strict schema 400s a request still sending it; `selectModel(serverDefault)` builds
+  the model from admin runtime settings → `EXPLORER_DEFAULT_*` only, and the SPA/eval send no provider
+  (finishes what 022 started in the UI)
+
 Project constitution: `.specify/memory/constitution.md` (v1.1.1; the locked test runner is `bun:test`).
 <!-- SPECKIT END -->

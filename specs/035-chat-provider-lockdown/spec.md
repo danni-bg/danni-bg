@@ -2,7 +2,9 @@
 
 **Feature Branch**: `035-chat-provider-lockdown`
 **Created**: 2026-07-03
-**Status**: Draft
+**Status**: Implemented (`provider` removed from the strict `chatRequestSchema` → 400 for stale
+clients; `selectModel(serverDefault)` takes server config only; SPA sends no provider; contract doc +
+eval suite updated)
 **Input**: Holistic review finding (2026-07-03 SaaS/architecture/DRY+YAGNI re-evaluation): `/api/chat`
 still accepts a client-supplied provider (arbitrary baseUrl + apiKey), making the server an egress
 proxy / SSRF vector; spec 022 removed only the UI, not the API surface.

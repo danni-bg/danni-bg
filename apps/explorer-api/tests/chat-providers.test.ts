@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import {
-  type ProviderConfig,
-  ProviderError,
-  selectModel,
-  serverDefaultFromEnv,
-} from '../src/chat/providers.ts';
+import { ProviderError, selectModel, serverDefaultFromEnv } from '../src/chat/providers.ts';
 
 describe('serverDefaultFromEnv', () => {
   it('returns null when provider or model is missing/invalid', () => {
@@ -32,36 +27,31 @@ describe('serverDefaultFromEnv', () => {
 });
 
 describe('selectModel', () => {
-  const oc: ProviderConfig = { kind: 'openai-compatible', model: 'gpt', apiKey: 'sk' };
+  // Spec 035 (FR-171): the ONLY input is the server-configured default — there is no per-request
+  // provider parameter, so nothing request-derived can reach client construction.
 
-  it('builds an openai-compatible model from a user key', () => {
-    expect(selectModel(oc, null).modelId).toBe('gpt');
+  it('builds an openai-compatible model from the server default', () => {
+    expect(
+      selectModel({
+        kind: 'openai-compatible',
+        model: 'srv',
+        baseUrl: 'http://x/v1',
+        apiKey: 'k',
+      }).modelId,
+    ).toBe('srv');
   });
 
-  it('builds an anthropic model', () => {
-    expect(selectModel({ kind: 'anthropic', model: 'claude', apiKey: 'sk' }, null).modelId).toBe(
-      'claude',
-    );
+  it('builds an anthropic model from the server default (key optional)', () => {
+    expect(selectModel({ kind: 'anthropic', model: 'claude' }).modelId).toBe('claude');
   });
 
-  it('throws provider_unconfigured without a key and not using server default', () => {
+  it('throws provider_unconfigured when no server default is configured', () => {
     try {
-      selectModel({ kind: 'anthropic', model: 'claude' }, null);
+      selectModel(null);
       throw new Error('should have thrown');
     } catch (e) {
       expect(e).toBeInstanceOf(ProviderError);
       expect((e as ProviderError).code).toBe('provider_unconfigured');
     }
-  });
-
-  it('uses the server default when requested; errors when absent', () => {
-    const sd = {
-      kind: 'openai-compatible' as const,
-      model: 'srv',
-      baseUrl: 'http://x/v1',
-      apiKey: 'k',
-    };
-    expect(selectModel({ ...oc, useServerDefault: true }, sd).modelId).toBe('srv');
-    expect(() => selectModel({ ...oc, useServerDefault: true }, null)).toThrow(ProviderError);
   });
 });

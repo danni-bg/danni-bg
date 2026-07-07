@@ -1,15 +1,6 @@
 import { describe, expect, it } from 'bun:test';
-import type { ProviderConfig } from '../types.ts';
 import type { ChatCallbacks, ChatRequestBody } from './sendChat.ts';
 import { dispatchSSEEvent, sendChat } from './sendChat.ts';
-
-const DEFAULT_PROVIDER: ProviderConfig = {
-  kind: 'openai-compatible',
-  baseUrl: null,
-  model: 'server-default',
-  apiKey: null,
-  useServerDefault: true,
-};
 
 function streamingFetch(sseText: string): typeof fetch {
   return (async () => {
@@ -30,7 +21,6 @@ const body: ChatRequestBody = {
   sessionId: null,
   message: 'q',
   scope: {},
-  provider: DEFAULT_PROVIDER,
 };
 
 describe('dispatchSSEEvent', () => {

@@ -50,11 +50,10 @@ Implemented in `grounding.ts`, contract-tested against fixtures:
 5. **Anchors**: from cited datasets' `geoEntityIds`, emit a `MapAnchor` for map highlight/focus (FR-026/FR-027).
 
 ## Provider seam
-`providers.ts` selects a model client from `ProviderConfig`:
+`providers.ts` selects a model client from the **server-configured default only** (spec 035: admin runtime settings → `EXPLORER_DEFAULT_*` env; requests carry no provider):
 - `kind: "openai-compatible"` → AI SDK OpenAI adapter with configurable `baseUrl` (OpenAI, self-hosted/local vLLM).
 - `kind: "anthropic"` → AI SDK Anthropic adapter.
-- `useServerDefault: true` → server-configured default provider (key from server config only).
-- Missing/invalid credentials → `provider_unconfigured` / `provider_error` surfaced as an SSE `error` event with no fabricated content (FR-023).
+- No default configured → `provider_unconfigured`; runtime failure → `provider_error` — both surfaced as an SSE `error` event with no fabricated content (FR-023).
 - The provider seam is the test boundary: contract/integration tests inject a stub model returning scripted tool calls + text, so the inner loop needs no live LLM (Constitution VI).
 
-**Secrets**: `apiKey` is used only to construct the per-request client and is never logged or persisted (FR-024, Constitution IV).
+**Secrets**: `apiKey` comes from server config only, is used only to construct the client, and is never logged or persisted (FR-024, Constitution IV).

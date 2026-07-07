@@ -80,21 +80,19 @@ Paginated/sampled resource rows (never bulk-loads million-row resources — Scal
 ## POST /api/chat  (Server-Sent Events)
 Backend-mediated, grounded, streaming chat (FR-015–FR-020, FR-025–FR-028). The browser never calls the LLM provider or mirror tools directly (clarification, FR-016).
 
-**Request body** (Zod-validated):
+**Request body** (Zod-validated, strict — unknown fields are rejected):
 ```json
 {
   "sessionId": "string|null",        // null → server creates one (session-only, in-memory)
   "message": "string",
-  "scope": { /* ScopeDescriptor: encoded FilterState, see chat-tools.md */ },
-  "provider": {                       // per-request; never persisted/logged (FR-024)
-    "kind": "openai-compatible | anthropic",
-    "baseUrl": "string|null",
-    "model": "string",
-    "apiKey": "string|null",
-    "useServerDefault": false
-  }
+  "scope": { /* ScopeDescriptor: encoded FilterState, see chat-tools.md */ }
 }
 ```
+
+The LLM provider is resolved **server-side only** (spec 035 FR-170/171): admin runtime settings
+(spec 019), falling back to the `EXPLORER_DEFAULT_*` env seed. There is no client-supplied
+`provider` — a request still sending the pre-035 field fails validation with 400 (`bad_request`),
+and nothing request-derived ever reaches provider-client construction.
 
 **Response**: `text/event-stream`. Event types:
 | event | data |

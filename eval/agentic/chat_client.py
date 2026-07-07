@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from config import CONFIG, ProviderCfg
+from config import CONFIG
 
 # The chat API is gated (spec 019): POST /api/chat now requires a valid Kratos
 # session. The eval registers a throwaway user once via the single-port /kratos
@@ -93,15 +93,6 @@ class ChatResult:
         return [c.get("datasetId") for c in self.citations if c.get("datasetId")]
 
 
-def _provider_block(p: ProviderCfg) -> dict:
-    block: dict = {"kind": p.kind, "model": p.model}
-    if p.base_url:
-        block["baseUrl"] = p.base_url
-    if p.api_key:
-        block["apiKey"] = p.api_key
-    return block
-
-
 def dataset_detail(dataset_id: str) -> dict | None:
     """Fetch a cited dataset's real record (title/publisher/tags/resources) to
     reconstruct the grounding context the answer should be faithful to."""
@@ -137,7 +128,9 @@ def chat(message: str, *, grounding_dataset_ids: list[str] | None = None,
     """Send one turn (fresh session) and parse the SSE stream into a ChatResult."""
     # debug=True → the server emits a `grounding` event with the EXACT context it injected,
     # so faithfulness is judged against what the model actually saw (no reconstruction guesswork).
-    body: dict = {"message": message, "provider": _provider_block(CONFIG.subject), "debug": True}
+    # The provider is server-configured only (spec 035): the request carries no provider block —
+    # the graded subject is whatever model the API's admin settings / EXPLORER_DEFAULT_* select.
+    body: dict = {"message": message, "debug": True}
     if grounding_dataset_ids:
         body["groundingDatasetIds"] = grounding_dataset_ids
     if scope:

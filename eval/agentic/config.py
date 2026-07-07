@@ -1,15 +1,14 @@
 """Central, fully-overridable configuration for the agentic eval suite.
 
-Every LLM is configurable. There are two independent seams:
+The SUBJECT (the model the chat API runs under) is the server-configured
+provider — admin runtime settings with the EXPLORER_DEFAULT_* env as fallback
+(spec 035 removed the per-request provider block, so the eval can no longer
+pick the subject per request; repoint the server's settings/env instead).
 
-  * SUBJECT  — the model the chat API runs under (system-under-test). We send it
-    explicitly in each /api/chat request's `provider` block, so the eval controls
-    which model is graded regardless of the server's own default.
-  * JUDGE    — the LLM-as-judge that scores prose faithfulness (G-Eval).
-
-Both default to the repo's EXPLORER_DEFAULT_* (the self-hosted gemma on spark),
-but can be repointed independently via EVAL_SUBJECT_* / EVAL_JUDGE_* — e.g. to
-grade gemma with a different, stronger judge for independence.
+The JUDGE — the LLM-as-judge that scores prose faithfulness (G-Eval) — remains
+its own seam: it defaults to the repo's EXPLORER_DEFAULT_* (the self-hosted
+gemma on spark) but can be repointed via EVAL_JUDGE_* — e.g. to grade gemma
+with a different, stronger judge for independence.
 
 Resolution order for any value: eval/.env override > repo-root .env > built-in
 default. Secrets (API keys) come from env only and are never logged.
@@ -51,7 +50,6 @@ class ProviderCfg:
 @dataclass(frozen=True)
 class EvalConfig:
     api_base_url: str   # the running danni explorer-api (chat lives here)
-    subject: ProviderCfg
     judge: ProviderCfg
     judge_temperature: float
     judge_structured: bool   # constrain judge output via response_format=json_schema
@@ -59,12 +57,6 @@ class EvalConfig:
 
 
 def load() -> EvalConfig:
-    subject = ProviderCfg(
-        kind=_get("EVAL_SUBJECT_KIND", "EXPLORER_DEFAULT_PROVIDER", default="openai-compatible"),
-        model=_get("EVAL_SUBJECT_MODEL", "EXPLORER_DEFAULT_MODEL", default="gemma-4-26b-uncensored"),
-        base_url=_get("EVAL_SUBJECT_BASE_URL", "EXPLORER_DEFAULT_BASE_URL", default="http://spark:8000/v1"),
-        api_key=_get("EVAL_SUBJECT_API_KEY", "EXPLORER_DEFAULT_API_KEY", default="EMPTY"),
-    )
     judge = ProviderCfg(
         kind=_get("EVAL_JUDGE_KIND", default="openai-compatible"),
         model=_get("EVAL_JUDGE_MODEL", "EXPLORER_DEFAULT_MODEL", default="gemma-4-26b-uncensored"),
@@ -73,7 +65,6 @@ def load() -> EvalConfig:
     )
     return EvalConfig(
         api_base_url=_get("EVAL_API_BASE_URL", default="http://localhost:8790"),
-        subject=subject,
         judge=judge,
         judge_temperature=float(_get("EVAL_JUDGE_TEMPERATURE", default="0") or "0"),
         judge_structured=(_get("EVAL_JUDGE_STRUCTURED", default="1") == "1"),
