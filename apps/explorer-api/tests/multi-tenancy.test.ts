@@ -217,4 +217,98 @@ describe('Multi-tenancy (spec 029)', () => {
     const res = await s.app.request('/api/admin/tenants', { headers: h(ownerA) });
     expect(res.status).toBe(403); // org owner ≠ danni super-admin
   });
+
+  // Spec 036 (FR-180..184): owner protection on every member-mutation path. SC-1: no sequence of
+  // /api/tenant calls by a non-owner admin changes an owner's role; SC-2: an org never reaches zero
+  // owners; SC-3: adding a genuinely new member keeps working (covered by the SC-C1 test above).
+  describe('org role integrity (spec 036)', () => {
+    const patchRole = (caller: UserRow, targetId: string, role: string) =>
+      s.app.request(`/api/tenant/members/${targetId}`, {
+        method: 'PATCH',
+        headers: h(caller),
+        body: JSON.stringify({ role }),
+      });
+
+    it('FR-180: an org admin re-adding the owner gets 409 and the role is unchanged', async () => {
+      s.tenants.addMember(acme.id, memberC.id, 'admin');
+      const res = await s.app.request('/api/tenant/members', {
+        method: 'POST',
+        headers: h(memberC),
+        body: JSON.stringify({ email: 'a@acme.test', role: 'member' }),
+      });
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe('already_member');
+      expect(s.tenants.membershipOf(acme.id, ownerA.id)?.role).toBe('owner');
+    });
+
+    it('FR-180: re-adding any existing member (not just the owner) is a 409', async () => {
+      s.tenants.addMember(acme.id, memberC.id, 'member');
+      const res = await s.app.request('/api/tenant/members', {
+        method: 'POST',
+        headers: h(ownerA),
+        body: JSON.stringify({ email: 'c@acme.test', role: 'admin' }),
+      });
+      expect(res.status).toBe(409);
+      expect(s.tenants.membershipOf(acme.id, memberC.id)?.role).toBe('member');
+    });
+
+    it('FR-181: a non-owner admin PATCHing an owner to member gets 403, role unchanged', async () => {
+      s.tenants.addMember(acme.id, memberC.id, 'admin');
+      const res = await patchRole(memberC, ownerA.id, 'member');
+      expect(res.status).toBe(403);
+      expect(s.tenants.membershipOf(acme.id, ownerA.id)?.role).toBe('owner');
+    });
+
+    it('FR-182: the sole owner cannot demote themselves (org never ownerless)', async () => {
+      const res = await patchRole(ownerA, ownerA.id, 'member');
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe('last_owner');
+      expect(s.tenants.ownerCount(acme.id)).toBe(1);
+    });
+
+    it('an owner CAN demote a co-owner when another owner remains', async () => {
+      const coOwner = mkUser('co@acme.test');
+      s.tenants.addMember(acme.id, coOwner.id, 'owner');
+      const res = await patchRole(ownerA, coOwner.id, 'admin');
+      expect(res.status).toBe(200);
+      expect(s.tenants.membershipOf(acme.id, coOwner.id)?.role).toBe('admin');
+      expect(s.tenants.ownerCount(acme.id)).toBe(1);
+    });
+
+    it('ownership transfer: promote a member to owner, then the old owner is demotable', async () => {
+      s.tenants.addMember(acme.id, memberC.id, 'admin');
+      const promote = await patchRole(ownerA, memberC.id, 'owner');
+      expect(promote.status).toBe(200);
+      const demote = await patchRole(memberC, ownerA.id, 'member');
+      expect(demote.status).toBe(200);
+      expect(s.tenants.membershipOf(acme.id, ownerA.id)?.role).toBe('member');
+      expect(s.tenants.membershipOf(acme.id, memberC.id)?.role).toBe('owner');
+      expect(s.tenants.ownerCount(acme.id)).toBe(1);
+    });
+
+    it('normal flows still work: add member 201, patch member→admin 200, delete 200', async () => {
+      const add = await s.app.request('/api/tenant/members', {
+        method: 'POST',
+        headers: h(ownerA),
+        body: JSON.stringify({ email: 'c@acme.test' }),
+      });
+      expect(add.status).toBe(201);
+      const patch = await patchRole(ownerA, memberC.id, 'admin');
+      expect(patch.status).toBe(200);
+      expect(s.tenants.membershipOf(acme.id, memberC.id)?.role).toBe('admin');
+      const del = await s.app.request(`/api/tenant/members/${memberC.id}`, {
+        method: 'DELETE',
+        headers: h(ownerA),
+      });
+      expect(del.status).toBe(200);
+      expect(s.tenants.membershipOf(acme.id, memberC.id)).toBeNull();
+    });
+
+    it('PATCHing a non-member still 404s', async () => {
+      const res = await patchRole(ownerA, 'no-such-user', 'admin');
+      expect(res.status).toBe(404);
+    });
+  });
 });
