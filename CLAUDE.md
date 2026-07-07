@@ -73,5 +73,12 @@ capabilities each have their own spec:
   the model from admin runtime settings → `EXPLORER_DEFAULT_*` only, and the SPA/eval send no provider
   (finishes what 022 started in the UI)
 
+- 038 API-key scope coverage for `/api/me`: every personal surface now declares an explicit access
+  class (FR-200) enforced by the spec-027 guards instead of bare `requireAuth` — human-only
+  (`requireHuman`: key CRUD + `PUT /avatar`), `chat` scope (`requireScope('chat')`: sessions
+  list/read/delete + generation stream/stop), any-key (`allowAnyKey`: `GET /usage`+`/api-usage`
+  self-introspection). Closes the gap where a leaked `read` key could read/delete chat history, stop
+  live generations, and overwrite the avatar; a route enumeration test fails on any undeclared surface
+
 Project constitution: `.specify/memory/constitution.md` (v1.1.1; the locked test runner is `bun:test`).
 <!-- SPECKIT END -->
