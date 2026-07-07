@@ -3,7 +3,7 @@ import { Button } from '../components/ui/button.tsx';
 import { Card } from '../components/ui/card.tsx';
 import { fetchDataset } from '../lib/api.ts';
 import { cn } from '../lib/cn.ts';
-import { bilingualLabel, freshnessDisplay } from '../lib/format.ts';
+import { freshnessDisplay } from '../lib/format.ts';
 import { useServerState } from '../lib/useServerState.ts';
 import { useExplorer } from '../store/explorerStore.ts';
 
@@ -32,9 +32,7 @@ export function DatasetDetail({ datasetId, onClose }: DatasetDetailProps) {
       )}
       {detail && (
         <Card className="space-y-2 p-4">
-          <h2 className="font-semibold leading-snug">
-            {bilingualLabel(detail.titleBg, detail.titleEn, 'bg')}
-          </h2>
+          <h2 className="font-semibold leading-snug">{detail.titleBg}</h2>
           <p className="text-sm text-muted-foreground">{detail.descriptionBg}</p>
           <p className="text-sm">
             <span className={cn(freshnessDisplay(detail.freshness).isStale && 'text-warning')}>

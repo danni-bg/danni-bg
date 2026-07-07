@@ -2,10 +2,9 @@
 // against their effective quota with a small progress bar.
 
 import { ErrorState, Loading } from '../components/StatusMessage.tsx';
+import { formatNumber } from '../lib/format.ts';
 import { getMyUsage } from '../lib/meApi.ts';
 import { useServerState } from '../lib/useServerState.ts';
-
-const nf = new Intl.NumberFormat('bg-BG');
 
 export function SelfUsage() {
   const { data: usage, status, refetch } = useServerState('me:usage', getMyUsage);
@@ -27,9 +26,9 @@ export function SelfUsage() {
       ) : (
         <div className="space-y-2">
           <div className="flex items-baseline justify-between text-sm">
-            <span>{nf.format(usage.used)} токена</span>
+            <span>{formatNumber(usage.used)} токена</span>
             <span className="text-muted-foreground">
-              {unlimited ? 'без лимит' : `от ${nf.format(usage.limit)}`}
+              {unlimited ? 'без лимит' : `от ${formatNumber(usage.limit)}`}
             </span>
           </div>
           {unlimited ? null : (
@@ -43,15 +42,15 @@ export function SelfUsage() {
           <dl className="grid grid-cols-3 gap-2 text-xs">
             <div>
               <dt className="text-muted-foreground">Вход</dt>
-              <dd>{nf.format(usage.input)}</dd>
+              <dd>{formatNumber(usage.input)}</dd>
             </div>
             <div>
               <dt className="text-muted-foreground">Изход</dt>
-              <dd>{nf.format(usage.output)}</dd>
+              <dd>{formatNumber(usage.output)}</dd>
             </div>
             <div>
               <dt className="text-muted-foreground">Кеш</dt>
-              <dd>{nf.format(usage.cached)}</dd>
+              <dd>{formatNumber(usage.cached)}</dd>
             </div>
           </dl>
           <p className="text-xs text-muted-foreground">

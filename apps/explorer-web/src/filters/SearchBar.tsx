@@ -1,5 +1,6 @@
 import { Loader2, Search, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { Input } from '../components/ui/input.tsx';
 import { useExplorer } from '../store/explorerStore.ts';
 
 /** Pause after the last keystroke before committing the query, so typing doesn't fire a search
@@ -32,13 +33,13 @@ export function SearchBar({ loading }: SearchBarProps) {
   return (
     <div className="relative">
       <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-      <input
+      <Input
         aria-label="Търсене на набори"
         type="text"
         placeholder="Търси по дума, тема, издател…"
         value={text}
         onChange={(e) => setText(e.target.value)}
-        className="h-10 w-full rounded-lg border border-input bg-background pr-9 pl-9 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="h-10 rounded-lg pr-9 pl-9"
       />
       {loading ? (
         <Loader2 className="absolute top-1/2 right-3 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />

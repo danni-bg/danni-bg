@@ -4,6 +4,7 @@
 
 import { useRef, useState } from 'react';
 import { useAuth } from '../auth/AuthContext.tsx';
+import { initials } from '../lib/format.ts';
 import { setMyAvatar } from '../lib/meApi.ts';
 
 const SIZE = 256;
@@ -32,13 +33,6 @@ function toSquareDataUrl(file: File): Promise<string> {
     };
     img.src = url;
   });
-}
-
-function initials(base: string): string {
-  const parts = base.split(/[\s@._-]+/).filter(Boolean);
-  const a = parts[0]?.[0] ?? '';
-  const b = parts.length > 1 ? (parts.at(-1)?.[0] ?? '') : '';
-  return ((a + b).toUpperCase() || base[0]?.toUpperCase()) ?? '?';
 }
 
 export function AvatarUpload() {

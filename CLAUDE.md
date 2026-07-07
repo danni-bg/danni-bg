@@ -268,6 +268,24 @@ capabilities each have their own spec:
   upserted with a sentinel `unresolved-org-<id>` slug + a `egov.org.unresolved` warning (org id +
   dataset uri) so placeholder rows are queryable, not silent (FR-364/365). No migration; 048/049/052
   preserved
+- 060 frontend structure hygiene: every frontend concern gets one home, no dead affordances. Dataset
+  selection moves INTO `explorerStore` (`selectedDataset` + `openDataset`/`closeDataset` beside
+  `reader`/`chatFocus`); the `onSelectDataset` prop + its App→DatasetList/ChatPanel drilling are gone —
+  a chat citation calls `store.openDataset()` directly (FR-430; map `focus`/hover stays local). An
+  `AccountPage` (`account/AccountPage.tsx`, routed at `/auth/settings`) owns the account composition
+  (avatar, appearance, usage, API keys + the Kratos settings sections via the reusable
+  `KratosSettingsSections`); `KratosFlow` shrinks to the generic login/registration/recovery/
+  verification renderer and its `createFlow`/`getFlow`/`submitFlow` triplet collapses to one
+  kind→SDK-method `flowApi` map (FR-431/432). The unused `ui/input`+`ui/textarea` shadcn primitives
+  are now USED across all hand-rolled input/textarea class sites (SettingsPage/KratosFlow/AdminUsage/
+  ApiKeys/FilterPanel/ResourcePreview/SearchBar + the chat composer's transparent `Textarea`), size/
+  variant deltas via `className` overrides (FR-433). `lib/format.ts` gains tested `formatNumber`
+  (bg-BG) / `formatDate` (bg-BG medium, `null → '—'`) / one `initials(nameOrEmail)` — the
+  `Intl`/`toLocaleString`/duplicate-`initials` sites all call them (FR-434). Dead exports deleted:
+  `cycleTheme`, `RequireAuth`, `fetchRegion`, `isEmptyFilter`, `translationNote` + the whole
+  `bilingualLabel`/`Lang`/`'en'` i18n-ahead-of-need branch (bg is the only exercised path; inlined to
+  `titleBg`), with their orphaned tests (FR-435). Frontend-only; behaviour unchanged — builds on
+  057/058/059
 
 - 055 backend DRY consolidation: one shared implementation per repeated backend idiom (pure refactor,
   behavior-preserving). `parseBody(c, schema, opts)` (`apps/explorer-api/src/middleware/parse-body.ts`)

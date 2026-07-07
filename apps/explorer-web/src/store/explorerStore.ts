@@ -28,6 +28,9 @@ export interface ExplorerState {
   highlight: MapAnchor;
   chatFocus: ChatFocus | null;
   reader: ReaderTarget | null;
+  /** The dataset whose detail is open in the sidebar (null = the list). Beside reader/chatFocus so a
+   * chat citation opens it via a store action instead of a prop callback chain (FR-430). */
+  selectedDataset: string | null;
   setFilters: (f: FilterState) => void;
   updateFilters: (fn: (f: FilterState) => FilterState) => void;
   clearFilters: () => void;
@@ -42,6 +45,10 @@ export interface ExplorerState {
   setChatFocus: (focus: ChatFocus | null) => void;
   openReader: (target: ReaderTarget) => void;
   closeReader: () => void;
+  /** Open a dataset's detail in the sidebar (e.g. from a list row or a chat citation). */
+  openDataset: (datasetId: string) => void;
+  /** Return the sidebar to the dataset list. */
+  closeDataset: () => void;
 }
 
 const NO_HIGHLIGHT: MapAnchor = { geoEntityIds: [], datasetIds: [] };
@@ -51,6 +58,7 @@ export const explorerStore = createStore<ExplorerState>((set) => ({
   highlight: NO_HIGHLIGHT,
   chatFocus: null,
   reader: null,
+  selectedDataset: null,
   setFilters: (filters) => set({ filters }),
   updateFilters: (fn) => set((s) => ({ filters: fn(s.filters) })),
   clearFilters: () => set({ filters: clearAll(), highlight: NO_HIGHLIGHT }),
@@ -63,6 +71,8 @@ export const explorerStore = createStore<ExplorerState>((set) => ({
   setChatFocus: (chatFocus) => set({ chatFocus }),
   openReader: (reader) => set({ reader }),
   closeReader: () => set({ reader: null }),
+  openDataset: (selectedDataset) => set({ selectedDataset }),
+  closeDataset: () => set({ selectedDataset: null }),
 }));
 
 export function useExplorer<T>(selector: (s: ExplorerState) => T): T {

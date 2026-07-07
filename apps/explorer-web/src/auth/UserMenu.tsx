@@ -4,15 +4,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { initials } from '../lib/format.ts';
 import type { AuthUser } from './AuthContext.tsx';
-
-function initials(user: AuthUser): string {
-  const base = user.displayName?.trim() || user.email;
-  const parts = base.split(/[\s@._-]+/).filter(Boolean);
-  const a = parts[0]?.[0] ?? '';
-  const b = parts.length > 1 ? (parts.at(-1)?.[0] ?? '') : '';
-  return ((a + b).toUpperCase() || base[0]?.toUpperCase()) ?? '?';
-}
 
 const ICON = 'h-4 w-4 shrink-0 text-muted-foreground';
 
@@ -114,7 +107,7 @@ export function UserMenu({
         {user.avatarUrl ? (
           <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" />
         ) : (
-          initials(user)
+          initials(user.displayName?.trim() || user.email)
         )}
       </button>
       {open ? (

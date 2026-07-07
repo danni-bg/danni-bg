@@ -1,13 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { EMPTY_FILTERS, type FilterState } from '../types.ts';
-import {
-  buildUrl,
-  fetchDatasets,
-  fetchFacets,
-  fetchNational,
-  fetchRegion,
-  fetchRegions,
-} from './api.ts';
+import { buildUrl, fetchDatasets, fetchFacets, fetchNational, fetchRegions } from './api.ts';
 
 const F = (over: Partial<FilterState> = {}): FilterState => ({ ...EMPTY_FILTERS, ...over });
 const realFetch = globalThis.fetch;
@@ -52,13 +45,6 @@ describe('fetch wrappers', () => {
     expect(cap.url).toContain('limit=10');
     expect(cap.url).toContain('offset=5');
     expect(out.total).toBe(0);
-  });
-
-  it('fetchRegion encodes the entity id', async () => {
-    const cap: { url?: string } = {};
-    stubFetch(cap, { region: {}, datasets: [], total: 0 });
-    await fetchRegion('geo:bg-oblast-ruse', F());
-    expect(cap.url).toContain('/api/regions/geo%3Abg-oblast-ruse');
   });
 
   it('fetchNational hits the national endpoint with pagination', async () => {

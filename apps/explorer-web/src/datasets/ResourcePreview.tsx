@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, Download, Filter, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { ErrorState, Loading } from '../components/StatusMessage.tsx';
+import { Input } from '../components/ui/input.tsx';
 import { fetchResourceRows } from '../lib/api.ts';
 import { cn } from '../lib/cn.ts';
 import { type GridSort, cycleSort, hasActiveFilters } from '../lib/grid.ts';
@@ -321,9 +322,9 @@ export function ResourcePreview({
             <div className="mb-1 truncate text-xs font-medium" title={openFilter.col}>
               {openFilter.col}
             </div>
-            <input
+            <Input
               aria-label={`Стойност за филтър ${openFilter.col}`}
-              // biome-ignore lint/a11y/noAutofocus: a filter popover should focus its input on open
+              // A filter popover should focus its input on open (autoFocus on the shared primitive).
               autoFocus
               value={colFilters[openFilter.col] ?? ''}
               onChange={(e) => setColFilters((f) => ({ ...f, [openFilter.col]: e.target.value }))}
@@ -331,7 +332,7 @@ export function ResourcePreview({
                 if (e.key === 'Enter' || e.key === 'Escape') setOpenFilter(null);
               }}
               placeholder="съдържа…"
-              className="h-7 w-full rounded border border-input bg-background px-2 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              className="h-7 rounded px-2 text-xs focus-visible:ring-1"
             />
             {(colFilters[openFilter.col] ?? '') !== '' && (
               <button

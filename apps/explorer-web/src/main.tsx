@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { App } from './App.tsx';
+import { AccountPage } from './account/AccountPage.tsx';
 import { SettingsPage } from './admin/SettingsPage.tsx';
 import { AuthProvider } from './auth/AuthContext.tsx';
 import { AuthError, Callback } from './auth/Callback.tsx';
@@ -37,10 +38,7 @@ if (root) {
               path="/auth/verification"
               element={<KratosFlow kind="verification" title="Потвърждение на имейл" />}
             />
-            <Route
-              path="/auth/settings"
-              element={<KratosFlow kind="settings" title="Настройки" />}
-            />
+            <Route path="/auth/settings" element={<AccountPage />} />
             <Route path="/auth/callback" element={<Callback />} />
             <Route path="/auth/error" element={<AuthError />} />
             <Route

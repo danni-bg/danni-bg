@@ -1,19 +1,27 @@
-// Pure display helpers (T031). Bilingual label fallback, freshness rendering, and machine-translation
-// labelling. Authoritative Bulgarian text is shown verbatim; English/derived text is flagged when the
-// translation confidence is low so users do not over-trust it (FR-031, Constitution X).
+// Pure display helpers (T031). Bulgarian-locale number/date formatting, name→initials, and freshness
+// rendering — the SPA's single home for presentation formatting (spec 060 FR-434). Authoritative
+// Bulgarian text is shown verbatim (Constitution X).
 
-import type { FreshnessBlock, Lang } from '../types.ts';
+import type { FreshnessBlock } from '../types.ts';
 
-/** Prefer the requested language; fall back to Bulgarian (always present) when English is absent. */
-export function bilingualLabel(bg: string, en: string | null, lang: Lang): string {
-  if (lang === 'en') return en ?? bg;
-  return bg;
+const numberFmt = new Intl.NumberFormat('bg-BG');
+/** Group-separated number in the Bulgarian locale (e.g. 12345 → "12 345"). */
+export function formatNumber(n: number): string {
+  return numberFmt.format(n);
 }
 
-/** A short note when text is machine-translated with low confidence (null when not applicable). */
-export function translationNote(translationConfidence: number | null, lang: Lang): string | null {
-  if (lang !== 'en' || translationConfidence === null) return null;
-  return translationConfidence < 0.7 ? 'машинен превод (ниска увереност)' : null;
+const dateFmt = new Intl.DateTimeFormat('bg-BG', { dateStyle: 'medium' });
+/** A medium bg-BG date from an ISO string; `null` (or unset) renders as an em dash. */
+export function formatDate(iso: string | null): string {
+  return iso ? dateFmt.format(new Date(iso)) : '—';
+}
+
+/** Up to two initials from a display name or email (first + last token, uppercased). */
+export function initials(nameOrEmail: string): string {
+  const parts = nameOrEmail.split(/[\s@._-]+/).filter(Boolean);
+  const a = parts[0]?.[0] ?? '';
+  const b = parts.length > 1 ? (parts.at(-1)?.[0] ?? '') : '';
+  return ((a + b).toUpperCase() || nameOrEmail[0]?.toUpperCase()) ?? '?';
 }
 
 export interface FreshnessDisplay {

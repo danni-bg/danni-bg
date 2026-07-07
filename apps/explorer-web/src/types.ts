@@ -19,8 +19,6 @@ export type { Citation, MapAnchor } from '../../explorer-api/src/chat/sse-events
 
 // ---- Client-only ----
 
-export type Lang = 'bg' | 'en';
-
 /** The SPA's read view of a resource's rows/document/text (GET …/resources/:id). A deliberately
  * reduced projection of the API's `ResourceContent` — the SPA never uses `curatedPath` and treats
  * `kind` as an opaque label — so it is defined here rather than shared. */

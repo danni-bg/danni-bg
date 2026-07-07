@@ -36,6 +36,9 @@ export function App() {
   const filters = useExplorer((s) => s.filters);
   const highlight = useExplorer((s) => s.highlight);
   const selectRegions = useExplorer((s) => s.selectRegions);
+  const selectedDataset = useExplorer((s) => s.selectedDataset);
+  const openDataset = useExplorer((s) => s.openDataset);
+  const closeDataset = useExplorer((s) => s.closeDataset);
 
   // The theme is chosen in user settings (Облик); here we only apply the saved preference (re-read on
   // mount, so returning from settings reflects a change) and keep it live with the OS in `system` mode.
@@ -46,7 +49,6 @@ export function App() {
     applyResolvedTheme(document.documentElement, resolved);
   }, [resolved]);
 
-  const [selectedDataset, setSelectedDataset] = useState<string | null>(null);
   const [showNational, setShowNational] = useState(false);
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
@@ -157,7 +159,7 @@ export function App() {
               {showNational ? '← Към регионите' : 'Национални набори (без регион)'}
             </Button>
             {selectedDataset ? (
-              <DatasetDetail datasetId={selectedDataset} onClose={() => setSelectedDataset(null)} />
+              <DatasetDetail datasetId={selectedDataset} onClose={closeDataset} />
             ) : datasetsQuery.status === 'error' ? (
               <ErrorState
                 message="Неуспешно зареждане на наборите от данни."
@@ -169,7 +171,7 @@ export function App() {
                   datasets={datasets}
                   total={total}
                   hasMore={hasMore(datasets.length, total)}
-                  onSelect={setSelectedDataset}
+                  onSelect={openDataset}
                   onLoadMore={loadMore}
                 />
                 {moreError && (
@@ -221,7 +223,7 @@ export function App() {
           style={{ width: rightOpen ? 380 : 0 }}
         >
           <div className="h-full w-[380px] p-4">
-            <ChatPanel onSelectDataset={setSelectedDataset} />
+            <ChatPanel />
           </div>
         </aside>
       </div>
