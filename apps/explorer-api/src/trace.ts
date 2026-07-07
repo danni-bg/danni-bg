@@ -1,8 +1,8 @@
 // Lightweight span tracing (spec 032, FR-150). A chat turn opens spans around each tool-loop step + the
 // provider call, each carrying the request id and timing — emitted as structured `span` log events so a
 // slow turn is attributable per step + provider latency, correlatable to its logs by request id
-// (SC-F1). Vendor-neutral: an OTel collector (infra/observability) can consume these; swap the emit for
-// the OTel SDK later without touching call sites.
+// (SC-F1). Vendor-neutral: an OTel collector (in the commercial deploy repo, danni-bg/deploy) can
+// consume these; swap the emit for the OTel SDK later without touching call sites.
 //
 // PRIVACY: spans carry METADATA only (step name, durationMs, tokens, model, outcome) — never prompt or
 // answer text. Attribute values are coerced to primitives; callers must not pass content strings.

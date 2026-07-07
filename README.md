@@ -84,8 +84,16 @@ The store on disk is the source of truth; every stage is re-runnable and every r
 
 **Open core.** This repository — the danni application (substrate, explorer, grounded chat, identity,
 API) — is open source under the **[EUPL-1.2](./LICENSE)** (European Union Public Licence). It's
-self-hostable on its own (`docker compose` + the dev Ory stack).
+self-hostable on its own (`docker compose` + the dev Ory stack). The self-host promise is locked by a
+repeatable smoke procedure — `scripts/smoke-selfhost.sh` takes a clean checkout through the documented
+clone → configure → run journey (deps → dev Ory stack → migrate → build SPA → serve) and asserts the
+explorer serves `/healthz` and the SPA on `:8790`, with no access to any private repo.
 
-The **commercial** layer — the scalable, multi-tenant, secured *deployment infrastructure* (Terraform,
-k8s, observability, the OpenBao/Headscale secret backend) and managed hosting — lives in separate
-private repos, not here.
+The **commercial** layer lives in the separate private **danni-bg/deploy** repo, not here. Everything
+below is commercial-only; nothing else this repo references lives outside it:
+
+- the **operations runbook** (`OPERATIONS.md` — backup/restore, upgrades, incident response);
+- the scalable, multi-node **deployment IaC** (Terraform + Kubernetes);
+- the **observability stack** (the OTel collector + metrics/tracing backends that scrape `/metrics`
+  and consume the app's spans);
+- the **secret backend** (OpenBao/Headscale) and **managed hosting**.

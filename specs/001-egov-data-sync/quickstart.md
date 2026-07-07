@@ -40,6 +40,12 @@ Required edits before the first run:
 - `scope` — start narrow (e.g. one publisher) for the first run; widen once
   you've confirmed the pipeline works.
 
+The example `portal` block is preset for the flagship portal, **data.egov.bg**
+(`"api": "egov-bg"`, `"baseUrl": "https://data.egov.bg/api/"`) — no edit needed to
+sync it. To point danni at a **generic CKAN** portal instead, set
+`"api": "ckan"` with that portal's CKAN Action API base
+(e.g. `"https://<host>/api/3/action/"`).
+
 Validate the config without running anything:
 
 ```bash

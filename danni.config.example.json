@@ -1,7 +1,7 @@
 {
   "portal": {
-    "baseUrl": "https://data.egov.bg/api/3/action/",
-    "api": "ckan",
+    "baseUrl": "https://data.egov.bg/api/",
+    "api": "egov-bg",
     "apiKeyEnv": null
   },
   "crawler": {

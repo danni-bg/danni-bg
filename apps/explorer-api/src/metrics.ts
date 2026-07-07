@@ -1,9 +1,9 @@
 // In-process metrics registry (spec 032, FR-149; deepens the spec-030 RED snapshot). Records RED
 // (rate/errors/duration) per route class + status class plus domain signals — LLM tokens + cost (from
 // the 026 usage signal), rate-limit/quota 429s (028), and chat outcomes — and exposes them in the
-// Prometheus text exposition format for a scraper. Single-node/in-memory; an OTel collector (see
-// infra/observability) scrapes /metrics and fans out to the metrics backend. snapshot() is kept for the
-// quick JSON view + tests.
+// Prometheus text exposition format for a scraper. Single-node/in-memory; an OTel collector (part of
+// the commercial deploy repo, danni-bg/deploy) scrapes /metrics and fans out to the metrics backend.
+// snapshot() is kept for the quick JSON view + tests.
 //
 // Spec 045 adds the three SaaS signals: request-duration HISTOGRAMS per route class (tail latency, so
 // histogram_quantile yields p95/p99), a bounded-cardinality `tenant` label on the token/cost/request

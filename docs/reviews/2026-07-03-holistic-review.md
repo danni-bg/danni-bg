@@ -44,7 +44,7 @@ Each finding became (part of) a **single-responsibility spec**, numbered `034`â€
 | [044-runtime-image-hardening](../../specs/044-runtime-image-hardening/spec.md) | the shipped container is minimal and unprivileged | Runtime image = full build stage copy, runs as root |
 | [045-saas-observability](../../specs/045-saas-observability/spec.md) | tail latency, per-tenant attribution, quota exhaustion are observable | Avg-only durations (no p95/p99), no tenant label, token-quota 429s uncounted; `/metrics` exposure undecided |
 | [046-ci-e2e-gate](../../specs/046-ci-e2e-gate/spec.md) | the browser e2e suite gates CI | Playwright configured (hermetic fixtures already stub API+Kratos) but never runs in CI |
-| [047-self-host-parity](../../specs/047-self-host-parity/spec.md) | everything this repo references or promises exists here | Dangling `infra/observability` / `OPERATIONS.md` pointers; example config can't sync data.egov.bg as shipped |
+| [047-self-host-parity](../../specs/047-self-host-parity/spec.md) | everything this repo references or promises exists here | Dangling deploy-repo pointers (observability config + operations runbook); example config can't sync data.egov.bg as shipped |
 
 ## Pipeline correctness & scale
 

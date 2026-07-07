@@ -312,7 +312,8 @@ export function createApp(ctx: AppContext): Hono {
   }
 
   // Prometheus metrics (spec 030 RED, deepened in 032): counters from the registry + scrape-time gauges
-  // (active detached generations, index freshness). Scraped by the OTel collector (infra/observability).
+  // (active detached generations, index freshness). Scraped by the OTel collector (in the commercial
+  // deploy repo, danni-bg/deploy).
   // Unlike /healthz + /readyz (public probes), /metrics is GATED (spec 045 FR-273): it leaks traffic
   // volumes, per-tenant labels, and LLM spend. A bearer token / CIDR allowlist admits a scraper; a
   // non-dev profile with no gate configured fails closed (404), never leaking.
