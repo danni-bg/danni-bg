@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
   type StorageLike,
-  type Theme,
   applyResolvedTheme,
-  cycleTheme,
   loadTheme,
   resolveTheme,
   saveTheme,
@@ -32,15 +30,6 @@ describe('theme', () => {
     expect(resolveTheme('system', false)).toBe('light');
     expect(resolveTheme('dark', false)).toBe('dark');
     expect(resolveTheme('light', true)).toBe('light');
-  });
-
-  it('cycles light → dark → system → light', () => {
-    const order: Theme[] = ['light', 'dark', 'system', 'light'];
-    let t: Theme = 'light';
-    for (let i = 1; i < order.length; i++) {
-      t = cycleTheme(t);
-      expect(t).toBe(order[i]);
-    }
   });
 
   it('toggles the dark class on the root element', () => {

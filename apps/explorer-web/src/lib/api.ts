@@ -30,12 +30,6 @@ export interface DatasetsResponse {
   offset: number;
 }
 
-export interface RegionDatasetsResponse {
-  region: RegionSummary;
-  datasets: DatasetPointer[];
-  total: number;
-}
-
 export function fetchRegions(
   f: FilterState,
   level: 'oblast' | 'municipality',
@@ -54,12 +48,6 @@ export function fetchDatasets(f: FilterState, limit = 50, offset = 0): Promise<D
 
 export function fetchDataset(datasetId: string): Promise<DatasetDetailView> {
   return request(`/api/datasets/${encodeURIComponent(datasetId)}`);
-}
-
-export function fetchRegion(entityId: string, f: FilterState): Promise<RegionDatasetsResponse> {
-  return request(`/api/regions/${encodeURIComponent(entityId)}`, {
-    params: filterStateToParams(f),
-  });
 }
 
 export function fetchFacets(f: FilterState): Promise<Facets> {

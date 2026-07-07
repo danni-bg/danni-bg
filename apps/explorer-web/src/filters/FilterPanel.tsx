@@ -2,6 +2,7 @@ import { ChevronDown } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { ErrorState } from '../components/StatusMessage.tsx';
 import { Badge } from '../components/ui/badge.tsx';
+import { Input } from '../components/ui/input.tsx';
 import { fetchFacets } from '../lib/api.ts';
 import { cn } from '../lib/cn.ts';
 import { removeChip, setFreshness, toChips, toggleValue } from '../lib/filters.ts';
@@ -173,12 +174,12 @@ export function FilterPanel({ geoLabel }: FilterPanelProps = {}) {
           onToggle={() => setOpen((o) => ({ ...o, tags: !o.tags }))}
         >
           {facets.tags.length > TOP_N && (
-            <input
+            <Input
               aria-label="Търси таг"
               value={tagQuery}
               onChange={(e) => setTagQuery(e.target.value)}
               placeholder="намери таг…"
-              className="mb-1 h-7 w-full rounded border border-input bg-background px-2 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              className="mb-1 h-7 rounded px-2 text-xs focus-visible:ring-1"
             />
           )}
           {tagsShown.map((t) => (

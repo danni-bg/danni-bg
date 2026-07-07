@@ -3,12 +3,13 @@
 
 import { useState } from 'react';
 import { ErrorState, Loading } from '../components/StatusMessage.tsx';
+import { Input } from '../components/ui/input.tsx';
 import { type AdminUsageRow, getUsage, resetUserUsage, setUserLimit } from '../lib/adminApi.ts';
+import { formatNumber } from '../lib/format.ts';
 import { useServerState } from '../lib/useServerState.ts';
 import { resetUsage, saveUserLimit } from './adminUsageActions.ts';
 
-const nf = new Intl.NumberFormat('bg-BG');
-const fmtLimit = (limit: number) => (limit <= 0 ? '∞' : nf.format(limit));
+const fmtLimit = (limit: number) => (limit <= 0 ? '∞' : formatNumber(limit));
 const api = { setUserLimit, resetUserUsage };
 
 export function AdminUsage() {
@@ -81,23 +82,25 @@ export function AdminUsage() {
                 </td>
                 <td className="px-3 py-2 text-right">
                   <span className={r.exceeded ? 'font-medium text-destructive' : ''}>
-                    {nf.format(r.used)}
+                    {formatNumber(r.used)}
                   </span>
                   <span className="text-muted-foreground"> / {fmtLimit(r.limit)}</span>
                 </td>
-                <td className="px-3 py-2 text-right text-muted-foreground">{nf.format(r.input)}</td>
                 <td className="px-3 py-2 text-right text-muted-foreground">
-                  {nf.format(r.output)}
+                  {formatNumber(r.input)}
                 </td>
                 <td className="px-3 py-2 text-right text-muted-foreground">
-                  {nf.format(r.cached)}
+                  {formatNumber(r.output)}
                 </td>
-                <td className="px-3 py-2 text-right">{nf.format(r.requests)}</td>
+                <td className="px-3 py-2 text-right text-muted-foreground">
+                  {formatNumber(r.cached)}
+                </td>
+                <td className="px-3 py-2 text-right">{formatNumber(r.requests)}</td>
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-1">
-                    <input
+                    <Input
                       aria-label={`Лимит за ${r.email}`}
-                      className="w-24 rounded border border-border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring/40"
+                      className="h-8 w-24 px-2"
                       placeholder="по подразб."
                       value={edits[r.userId] ?? r.tokenLimit?.toString() ?? ''}
                       onChange={(e) => setEdits((m) => ({ ...m, [r.userId]: e.target.value }))}

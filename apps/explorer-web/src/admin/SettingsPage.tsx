@@ -3,11 +3,13 @@
 
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Input } from '../components/ui/input.tsx';
 import { type AdminSettings, type SettingsPut, getSettings, putSettings } from '../lib/adminApi.ts';
 import { useServerState } from '../lib/useServerState.ts';
 import { AdminUsage } from './AdminUsage.tsx';
 
-const INPUT =
+// The one non-input control on the form; the text fields use the shared <Input> primitive (FR-433).
+const SELECT =
   'w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
 
 export function SettingsPage() {
@@ -83,23 +85,18 @@ export function SettingsPage() {
           <legend className="px-1 text-sm font-medium">LLM доставчик (chat)</legend>
           <label className="block space-y-1">
             <span className="text-sm text-muted-foreground">Тип</span>
-            <select className={INPUT} value={kind} onChange={(e) => setKind(e.target.value)}>
+            <select className={SELECT} value={kind} onChange={(e) => setKind(e.target.value)}>
               <option value="openai-compatible">openai-compatible</option>
               <option value="anthropic">anthropic</option>
             </select>
           </label>
           <label className="block space-y-1">
             <span className="text-sm text-muted-foreground">Модел</span>
-            <input
-              className={INPUT}
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              required
-            />
+            <Input value={model} onChange={(e) => setModel(e.target.value)} required />
           </label>
           <label className="block space-y-1">
             <span className="text-sm text-muted-foreground">Base URL</span>
-            <input className={INPUT} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+            <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
           </label>
           <label className="block space-y-1">
             <span className="text-sm text-muted-foreground">
@@ -108,8 +105,7 @@ export function SettingsPage() {
                 ? `(текущ: ${data.llm.apiKeyHint}; празно = без промяна)`
                 : ''}
             </span>
-            <input
-              className={INPUT}
+            <Input
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
@@ -130,8 +126,7 @@ export function SettingsPage() {
           </label>
           <label className="block space-y-1">
             <span className="text-sm text-muted-foreground">Праг за свежест (секунди)</span>
-            <input
-              className={INPUT}
+            <Input
               type="number"
               value={sloSeconds}
               onChange={(e) => setSloSeconds(e.target.value)}
@@ -141,8 +136,7 @@ export function SettingsPage() {
             <span className="text-sm text-muted-foreground">
               Лимит токени по подразбиране (0 = без лимит)
             </span>
-            <input
-              className={INPUT}
+            <Input
               type="number"
               value={defaultTokenLimit}
               onChange={(e) => setDefaultTokenLimit(e.target.value)}
@@ -152,8 +146,7 @@ export function SettingsPage() {
             <span className="text-sm text-muted-foreground">
               Тегло на кеширани токени (0–1; празно = 0.1)
             </span>
-            <input
-              className={INPUT}
+            <Input
               type="number"
               step="0.05"
               min="0"
@@ -166,8 +159,7 @@ export function SettingsPage() {
             <span className="text-sm text-muted-foreground">
               Макс. изходни токени на отговор (празно = 4096)
             </span>
-            <input
-              className={INPUT}
+            <Input
               type="number"
               value={maxOutputTokens}
               onChange={(e) => setMaxOutputTokens(e.target.value)}

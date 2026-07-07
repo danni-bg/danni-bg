@@ -1,21 +1,34 @@
 import { describe, expect, it } from 'bun:test';
 import type { FreshnessBlock } from '../types.ts';
-import { bilingualLabel, freshnessDisplay, translationNote } from './format.ts';
+import { formatDate, formatNumber, freshnessDisplay, initials } from './format.ts';
 
-describe('bilingualLabel', () => {
-  it('returns bg verbatim and en with bg fallback', () => {
-    expect(bilingualLabel('Бюджет', 'Budget', 'bg')).toBe('Бюджет');
-    expect(bilingualLabel('Бюджет', 'Budget', 'en')).toBe('Budget');
-    expect(bilingualLabel('Бюджет', null, 'en')).toBe('Бюджет');
+describe('formatNumber', () => {
+  it('group-separates in the bg-BG locale', () => {
+    expect(formatNumber(42)).toBe('42');
+    // bg-BG groups thousands with a (no-break) space; assert digits + separators, separator-agnostic.
+    expect(formatNumber(1234567)).toMatch(/^1\s234\s567$/);
   });
 });
 
-describe('translationNote', () => {
-  it('flags only low-confidence English', () => {
-    expect(translationNote(0.4, 'en')).toBe('машинен превод (ниска увереност)');
-    expect(translationNote(0.9, 'en')).toBeNull();
-    expect(translationNote(0.4, 'bg')).toBeNull();
-    expect(translationNote(null, 'en')).toBeNull();
+describe('formatDate', () => {
+  it('renders a medium bg-BG date and an em dash for null', () => {
+    expect(formatDate(null)).toBe('—');
+    const out = formatDate('2026-06-01T12:00:00Z');
+    expect(out).not.toBe('—');
+    expect(out).toContain('2026');
+  });
+});
+
+describe('initials', () => {
+  it('takes first+last token from a display name (former UserMenu signature)', () => {
+    expect(initials('Иван Петров')).toBe('ИП');
+  });
+  it('takes first+last token from an email (former AvatarUpload signature)', () => {
+    expect(initials('valentin.yanakiev@gmail.com')).toBe('VC');
+  });
+  it('single token → one initial; empty → a placeholder', () => {
+    expect(initials('single')).toBe('S');
+    expect(initials('')).toBe('?');
   });
 });
 

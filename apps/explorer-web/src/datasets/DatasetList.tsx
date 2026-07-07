@@ -1,6 +1,6 @@
 import { Button } from '../components/ui/button.tsx';
 import { cn } from '../lib/cn.ts';
-import { bilingualLabel, freshnessDisplay } from '../lib/format.ts';
+import { freshnessDisplay } from '../lib/format.ts';
 import type { DatasetPointer } from '../types.ts';
 
 interface DatasetListProps {
@@ -31,9 +31,7 @@ export function DatasetList({ datasets, total, hasMore, onSelect, onLoadMore }: 
                 onClick={() => onSelect(d.datasetId)}
                 className="w-full rounded-lg border bg-card p-3 text-left transition-colors hover:border-primary hover:bg-accent/40"
               >
-                <strong className="block font-medium leading-snug">
-                  {bilingualLabel(d.titleBg, d.titleEn, 'bg')}
-                </strong>
+                <strong className="block font-medium leading-snug">{d.titleBg}</strong>
                 <small className="text-muted-foreground">
                   {d.publisher?.titleBg ?? 'без издател'} ·{' '}
                   <span className={cn(fresh.isStale && 'text-warning')}>{fresh.label}</span>

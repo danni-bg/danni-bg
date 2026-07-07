@@ -27,15 +27,3 @@ export function filterStateToScope(f: FilterState): ScopeDescriptor {
   if (f.query.trim() !== '') scope.query = f.query.trim();
   return scope;
 }
-
-/** True when no filters are active (drives the "national view" state). */
-export function isEmptyFilter(f: FilterState): boolean {
-  return (
-    f.tags.length === 0 &&
-    f.publisherIds.length === 0 &&
-    f.geoUnitIds.length === 0 &&
-    f.freshness === 'any' &&
-    f.query.trim() === '' &&
-    !f.includeWithdrawn
-  );
-}

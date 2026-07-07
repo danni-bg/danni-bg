@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { EMPTY_FILTERS, type FilterState } from '../types.ts';
-import { filterStateToParams, filterStateToScope, isEmptyFilter } from './scope.ts';
+import { filterStateToParams, filterStateToScope } from './scope.ts';
 
 const F = (over: Partial<FilterState> = {}): FilterState => ({ ...EMPTY_FILTERS, ...over });
 
@@ -45,14 +45,5 @@ describe('filterStateToScope', () => {
       query: 'q',
       includeWithdrawn: true,
     });
-  });
-});
-
-describe('isEmptyFilter', () => {
-  it('true only for the empty state', () => {
-    expect(isEmptyFilter(F())).toBe(true);
-    expect(isEmptyFilter(F({ tags: ['x'] }))).toBe(false);
-    expect(isEmptyFilter(F({ query: ' ' }))).toBe(true);
-    expect(isEmptyFilter(F({ freshness: 'fresh' }))).toBe(false);
   });
 });

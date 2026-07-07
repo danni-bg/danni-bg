@@ -1,7 +1,8 @@
-// Generic Ory Kratos self-service flow UI (spec 019): login / registration / recovery / verification.
-// Inits the flow (create, or fetch an existing ?flow=id), renders flow.ui.nodes as a form, and submits
-// via the SDK — so it stays in the SPA. Validation errors (400) re-render with messages; a 422
-// browser_location_change is followed; success returns to the app with a fresh session.
+// Generic Ory Kratos self-service flow UI (spec 019): login / registration / recovery / verification,
+// plus the reusable settings-form sections that AccountPage composes (spec 060 FR-431). Inits the flow
+// (create, or fetch an existing ?flow=id), renders flow.ui.nodes as a form, and submits via the SDK —
+// so it stays in the SPA. Validation errors (400) re-render with messages; a 422 browser_location_change
+// is followed; success returns to the app with a fresh session.
 
 import type {
   UiContainer,
@@ -16,18 +17,9 @@ import type {
 } from '@ory/client';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { ApiKeys } from '../account/ApiKeys.tsx';
-import { AvatarUpload } from '../account/AvatarUpload.tsx';
-import { SelfUsage } from '../account/SelfUsage.tsx';
 import { Card } from '../components/ui/card.tsx';
+import { Input } from '../components/ui/input.tsx';
 import { type FlowKind, flowMessages, kratos } from '../lib/kratos.ts';
-import {
-  type Theme,
-  applyResolvedTheme,
-  loadTheme,
-  resolveTheme,
-  saveTheme,
-} from '../lib/theme.ts';
 import { useAuth } from './AuthContext.tsx';
 
 interface Flow {
@@ -35,20 +27,66 @@ interface Flow {
   ui: UiContainer;
 }
 
+// One kind→SDK-method map (FR-432): a single lookup per operation, each entry keeping its per-kind
+// body type. `createFlow`/`getFlow`/`submitFlow` are the three thin lookups over it.
+const flowApi = {
+  login: {
+    create: () => kratos.createBrowserLoginFlow(),
+    fetch: (id: string) => kratos.getLoginFlow({ id }),
+    submit: (flow: string, body: Record<string, string>) =>
+      kratos.updateLoginFlow({ flow, updateLoginFlowBody: body as unknown as UpdateLoginFlowBody }),
+  },
+  registration: {
+    create: () => kratos.createBrowserRegistrationFlow(),
+    fetch: (id: string) => kratos.getRegistrationFlow({ id }),
+    submit: (flow: string, body: Record<string, string>) =>
+      kratos.updateRegistrationFlow({
+        flow,
+        updateRegistrationFlowBody: body as unknown as UpdateRegistrationFlowBody,
+      }),
+  },
+  recovery: {
+    create: () => kratos.createBrowserRecoveryFlow(),
+    fetch: (id: string) => kratos.getRecoveryFlow({ id }),
+    submit: (flow: string, body: Record<string, string>) =>
+      kratos.updateRecoveryFlow({
+        flow,
+        updateRecoveryFlowBody: body as unknown as UpdateRecoveryFlowBody,
+      }),
+  },
+  settings: {
+    create: () => kratos.createBrowserSettingsFlow(),
+    fetch: (id: string) => kratos.getSettingsFlow({ id }),
+    submit: (flow: string, body: Record<string, string>) =>
+      kratos.updateSettingsFlow({
+        flow,
+        updateSettingsFlowBody: body as unknown as UpdateSettingsFlowBody,
+      }),
+  },
+  verification: {
+    create: () => kratos.createBrowserVerificationFlow(),
+    fetch: (id: string) => kratos.getVerificationFlow({ id }),
+    submit: (flow: string, body: Record<string, string>) =>
+      kratos.updateVerificationFlow({
+        flow,
+        updateVerificationFlowBody: body as unknown as UpdateVerificationFlowBody,
+      }),
+  },
+} satisfies Record<
+  FlowKind,
+  {
+    create: () => Promise<{ data: Flow }>;
+    fetch: (id: string) => Promise<{ data: Flow }>;
+    submit: (flow: string, body: Record<string, string>) => Promise<{ data: unknown }>;
+  }
+>;
+
 async function createFlow(kind: FlowKind): Promise<Flow> {
-  if (kind === 'login') return (await kratos.createBrowserLoginFlow()).data;
-  if (kind === 'registration') return (await kratos.createBrowserRegistrationFlow()).data;
-  if (kind === 'recovery') return (await kratos.createBrowserRecoveryFlow()).data;
-  if (kind === 'settings') return (await kratos.createBrowserSettingsFlow()).data;
-  return (await kratos.createBrowserVerificationFlow()).data;
+  return (await flowApi[kind].create()).data;
 }
 
 async function getFlow(kind: FlowKind, id: string): Promise<Flow> {
-  if (kind === 'login') return (await kratos.getLoginFlow({ id })).data;
-  if (kind === 'registration') return (await kratos.getRegistrationFlow({ id })).data;
-  if (kind === 'recovery') return (await kratos.getRecoveryFlow({ id })).data;
-  if (kind === 'settings') return (await kratos.getSettingsFlow({ id })).data;
-  return (await kratos.getVerificationFlow({ id })).data;
+  return (await flowApi[kind].fetch(id)).data;
 }
 
 /** Submit a flow step; returns the updated flow (multi-step flows like recovery continue in place). */
@@ -57,48 +95,9 @@ async function submitFlow(
   id: string,
   body: Record<string, string>,
 ): Promise<{ ui?: UiContainer } | undefined> {
-  if (kind === 'login') {
-    return (
-      await kratos.updateLoginFlow({
-        flow: id,
-        updateLoginFlowBody: body as unknown as UpdateLoginFlowBody,
-      })
-    ).data as { ui?: UiContainer };
-  }
-  if (kind === 'registration') {
-    return (
-      await kratos.updateRegistrationFlow({
-        flow: id,
-        updateRegistrationFlowBody: body as unknown as UpdateRegistrationFlowBody,
-      })
-    ).data as { ui?: UiContainer };
-  }
-  if (kind === 'recovery') {
-    return (
-      await kratos.updateRecoveryFlow({
-        flow: id,
-        updateRecoveryFlowBody: body as unknown as UpdateRecoveryFlowBody,
-      })
-    ).data as { ui?: UiContainer };
-  }
-  if (kind === 'settings') {
-    return (
-      await kratos.updateSettingsFlow({
-        flow: id,
-        updateSettingsFlowBody: body as unknown as UpdateSettingsFlowBody,
-      })
-    ).data as { ui?: UiContainer };
-  }
-  return (
-    await kratos.updateVerificationFlow({
-      flow: id,
-      updateVerificationFlowBody: body as unknown as UpdateVerificationFlowBody,
-    })
-  ).data as { ui?: UiContainer };
+  return (await flowApi[kind].submit(id, body)).data as { ui?: UiContainer };
 }
 
-const INPUT_CLASS =
-  'w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/40';
 const PRIMARY_BTN =
   'w-full rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:opacity-50';
 const PASSKEY_BTN =
@@ -218,8 +217,7 @@ function NodeField({ node, kind }: { node: UiNode; kind: FlowKind }) {
   return (
     <label className="block space-y-1.5">
       {label ? <span className="text-sm font-medium">{label}</span> : null}
-      <input
-        className={INPUT_CLASS}
+      <Input
         name={a.name}
         type={a.type}
         defaultValue={value}
@@ -262,51 +260,9 @@ const SETTINGS_SECTIONS: { group: string; title: string; subtitle?: string }[] =
   { group: 'passkey', title: 'Passkeys', subtitle: 'Вход без парола чрез биометрия или ключ' },
 ];
 
-const THEME_OPTIONS: { value: Theme; label: string }[] = [
-  { value: 'light', label: 'Светъл' },
-  { value: 'dark', label: 'Тъмен' },
-  { value: 'system', label: 'Системен' },
-];
-
-// Appearance is a purely client-side preference (localStorage + a `.dark` class on <html>) applied
-// by App via lib/theme.ts — it is not part of the Kratos flow.
-function AppearanceSection() {
-  const [theme, setTheme] = useState<Theme>(() => loadTheme(localStorage));
-  function choose(next: Theme) {
-    setTheme(next);
-    saveTheme(localStorage, next);
-    applyResolvedTheme(
-      document.documentElement,
-      resolveTheme(next, window.matchMedia('(prefers-color-scheme: dark)').matches),
-    );
-  }
-  return (
-    <section className="space-y-3 rounded-lg border border-border p-4">
-      <div>
-        <h2 className="text-sm font-semibold">Облик</h2>
-        <p className="text-xs text-muted-foreground">Тема на приложението</p>
-      </div>
-      <div className="grid grid-cols-3 gap-2">
-        {THEME_OPTIONS.map((o) => (
-          <button
-            key={o.value}
-            type="button"
-            onClick={() => choose(o.value)}
-            className={
-              theme === o.value
-                ? 'rounded-md border border-primary bg-primary/10 px-3 py-2 text-sm font-medium text-primary'
-                : 'rounded-md border border-border px-3 py-2 text-sm transition hover:bg-accent'
-            }
-          >
-            {o.label}
-          </button>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-export function KratosFlow({ kind, title }: { kind: FlowKind; title: string }) {
+/** The self-service flow state machine (init + script injection + submit), shared by the generic
+ * login/registration/recovery/verification renderer and the account settings sections. */
+function useKratosFlow(kind: FlowKind) {
   const [params] = useSearchParams();
   const flowId = params.get('flow');
   const navigate = useNavigate();
@@ -360,6 +316,15 @@ export function KratosFlow({ kind, title }: { kind: FlowKind; title: string }) {
       for (const s of added) s.remove();
     };
   }, [flow]);
+
+  function goSameOrigin(target: string) {
+    try {
+      const u = new URL(target, window.location.origin);
+      navigate(u.pathname + u.search, { replace: true });
+    } catch {
+      navigate('/', { replace: true });
+    }
+  }
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -415,87 +380,69 @@ export function KratosFlow({ kind, title }: { kind: FlowKind; title: string }) {
     }
   }
 
-  function goSameOrigin(target: string) {
-    try {
-      const u = new URL(target, window.location.origin);
-      navigate(u.pathname + u.search, { replace: true });
-    } catch {
-      navigate('/', { replace: true });
-    }
-  }
+  return { flow, fatal, onSubmit };
+}
 
-  // Settings is a full account page: Appearance (client-side) + one labelled form per Kratos method
-  // group (Профил / Парола / Passkeys), each submitting independently.
-  if (kind === 'settings') {
-    const csrfNode = flow?.ui.nodes.find(
-      (n) => n.group === 'default' && (n.attributes as UiNodeInputAttributes).name === 'csrf_token',
+/** The Kratos-owned settings sections (Профил / Парола / Passkeys), each a self-submitting form.
+ * AccountPage composes these alongside the non-Kratos account sections (FR-431). */
+export function KratosSettingsSections() {
+  const { flow, fatal, onSubmit } = useKratosFlow('settings');
+  const csrfNode = flow?.ui.nodes.find(
+    (n) => n.group === 'default' && (n.attributes as UiNodeInputAttributes).name === 'csrf_token',
+  );
+  if (!flow) {
+    return fatal ? (
+      <p className="text-sm text-destructive">{fatal}</p>
+    ) : (
+      <p className="text-sm text-muted-foreground">Зареждане…</p>
     );
-    return (
-      <div className="flex min-h-[80vh] items-center justify-center px-4 py-12">
-        <Card className="w-full max-w-md space-y-6 p-8">
-          <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-          {fatal ? <p className="text-sm text-destructive">{fatal}</p> : null}
-          <AvatarUpload />
-          <AppearanceSection />
-          <SelfUsage />
-          <ApiKeys />
-          {flow ? (
-            <>
-              {flowMessages(flow.ui).map((m) => (
-                <p key={m} className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
-                  {m}
-                </p>
+  }
+  return (
+    <>
+      {fatal ? <p className="text-sm text-destructive">{fatal}</p> : null}
+      {flowMessages(flow.ui).map((m) => (
+        <p key={m} className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+          {m}
+        </p>
+      ))}
+      {SETTINGS_SECTIONS.map((sec) => {
+        const secNodes = flow.ui.nodes.filter((n) => n.group === sec.group);
+        if (secNodes.length === 0) return null;
+        return (
+          <section key={sec.group} className="space-y-3 rounded-lg border border-border p-4">
+            <div>
+              <h2 className="text-sm font-semibold">{sec.title}</h2>
+              {sec.subtitle ? (
+                <p className="text-xs text-muted-foreground">{sec.subtitle}</p>
+              ) : null}
+            </div>
+            {/* One form per section so each method submits on its own. `action` lets the passkey
+                "Add" button submit natively (via webauthn.js). */}
+            <form
+              onSubmit={onSubmit}
+              action={flow.ui.action}
+              method={flow.ui.method?.toLowerCase()}
+              className="space-y-3"
+            >
+              {csrfNode ? <NodeField node={csrfNode} kind="settings" /> : null}
+              {secNodes.map((n) => (
+                <NodeField key={nodeKey(n)} node={n} kind="settings" />
               ))}
-              {SETTINGS_SECTIONS.map((sec) => {
-                const secNodes = flow.ui.nodes.filter((n) => n.group === sec.group);
-                if (secNodes.length === 0) return null;
-                return (
-                  <section
-                    key={sec.group}
-                    className="space-y-3 rounded-lg border border-border p-4"
-                  >
-                    <div>
-                      <h2 className="text-sm font-semibold">{sec.title}</h2>
-                      {sec.subtitle ? (
-                        <p className="text-xs text-muted-foreground">{sec.subtitle}</p>
-                      ) : null}
-                    </div>
-                    {/* One form per section so each method submits on its own. `action` lets the
-                        passkey "Add" button submit natively (via webauthn.js). */}
-                    <form
-                      onSubmit={onSubmit}
-                      action={flow.ui.action}
-                      method={flow.ui.method?.toLowerCase()}
-                      className="space-y-3"
-                    >
-                      {csrfNode ? <NodeField node={csrfNode} kind={kind} /> : null}
-                      {secNodes.map((n) => (
-                        <NodeField key={nodeKey(n)} node={n} kind={kind} />
-                      ))}
-                    </form>
-                  </section>
-                );
-              })}
-            </>
-          ) : (
-            !fatal && <p className="text-sm text-muted-foreground">Зареждане…</p>
-          )}
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-            {ALT_LINKS.settings.map((l) => (
-              <Link key={l.to} to={l.to} className="text-primary hover:underline">
-                {l.label}
-              </Link>
-            ))}
-          </div>
-        </Card>
-      </div>
-    );
-  }
+            </form>
+          </section>
+        );
+      })}
+    </>
+  );
+}
 
-  // login / registration / recovery / verification — a single credential form. Passkey is the
-  // alternative method: render the full primary form (email + password + submit) first, then an
-  // "или" divider, then the passkey button — instead of Kratos's source order, which interleaves
-  // the shared email field, the passkey button, and the password field.
+/** Generic single-credential flow: login / registration / recovery / verification. */
+export function KratosFlow({ kind, title }: { kind: FlowKind; title: string }) {
+  const { flow, fatal, onSubmit } = useKratosFlow(kind);
+
+  // Passkey is the alternative method: render the full primary form (email + password + submit)
+  // first, then an "или" divider, then the passkey button — instead of Kratos's source order, which
+  // interleaves the shared email field, the passkey button, and the password field.
   const isPasskey = (g?: string) => g === 'passkey' || g === 'webauthn';
   const primaryNodes = flow?.ui.nodes.filter((n) => !isPasskey(n.group)) ?? [];
   const passkeyNodes = flow?.ui.nodes.filter((n) => isPasskey(n.group)) ?? [];

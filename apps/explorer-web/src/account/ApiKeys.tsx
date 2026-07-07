@@ -4,11 +4,10 @@
 
 import { useState } from 'react';
 import { ErrorState, Loading } from '../components/StatusMessage.tsx';
+import { Input } from '../components/ui/input.tsx';
+import { formatDate } from '../lib/format.ts';
 import { createApiKey, getApiUsage, listApiKeys, revokeApiKey } from '../lib/meApi.ts';
 import { useServerState } from '../lib/useServerState.ts';
-
-const dt = new Intl.DateTimeFormat('bg-BG', { dateStyle: 'medium' });
-const fmtDate = (iso: string | null) => (iso ? dt.format(new Date(iso)) : '—');
 
 export function ApiKeys() {
   const keysQuery = useServerState('me:api-keys', listApiKeys);
@@ -98,7 +97,7 @@ export function ApiKeys() {
       ) : null}
 
       <div className="flex items-center gap-2">
-        <input
+        <Input
           aria-label="Име на ключа"
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -107,7 +106,7 @@ export function ApiKeys() {
           }}
           placeholder="Име (напр. ETL скрипт)"
           maxLength={80}
-          className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          className="h-8 min-w-0 flex-1 px-2"
         />
         <button
           type="button"
@@ -132,7 +131,8 @@ export function ApiKeys() {
               <div className="min-w-0">
                 <div className="truncate font-medium">{k.name}</div>
                 <div className="truncate text-muted-foreground">
-                  <code>{k.prefix}…</code> · {k.scopes.join(', ')} · ползван {fmtDate(k.lastUsedAt)}
+                  <code>{k.prefix}…</code> · {k.scopes.join(', ')} · ползван{' '}
+                  {formatDate(k.lastUsedAt)}
                   {usageByKey[k.id] ? ` · ${usageByKey[k.id]} заявки` : ''}
                 </div>
               </div>

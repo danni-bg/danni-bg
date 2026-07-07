@@ -4,6 +4,8 @@ import Markdown from 'react-markdown';
 import { Link } from 'react-router-dom';
 import remarkGfm from 'remark-gfm';
 import { useAuth } from '../auth/AuthContext.tsx';
+import { Textarea } from '../components/ui/textarea.tsx';
+import { formatNumber } from '../lib/format.ts';
 import { completePartialMarkdown } from '../lib/markdown.ts';
 import { useExplorer } from '../store/explorerStore.ts';
 import { type TurnUsage, useChatSession } from './useChatSession.ts';
@@ -11,10 +13,6 @@ import { type TurnUsage, useChatSession } from './useChatSession.ts';
 // Styled hover tooltip (appears above the button); shown via group-hover so it matches the theme.
 const TOOLTIP =
   'pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-popover px-2 py-1 text-xs text-popover-foreground opacity-0 shadow-md ring-1 ring-border transition-opacity group-hover:opacity-100';
-
-interface ChatPanelProps {
-  onSelectDataset: (datasetId: string) => void;
-}
 
 const SUGGESTIONS = [
   'Какви данни има за качеството на въздуха?',
@@ -52,7 +50,7 @@ function UsageFooter({
   live?: boolean;
 }) {
   if (!usage && durationMs == null) return null;
-  const fmt = (n: number) => n.toLocaleString('bg-BG');
+  const fmt = formatNumber;
   return (
     <div
       className="flex items-center gap-3 text-[11px] text-muted-foreground tabular-nums"
@@ -73,9 +71,10 @@ function UsageFooter({
   );
 }
 
-export function ChatPanel({ onSelectDataset }: ChatPanelProps) {
+export function ChatPanel() {
   const chatFocus = useExplorer((s) => s.chatFocus);
   const setChatFocus = useExplorer((s) => s.setChatFocus);
+  const openDataset = useExplorer((s) => s.openDataset);
   const { user } = useAuth();
 
   // The whole session lifecycle — messages, streaming, meters, persistence, resume, history CRUD —
@@ -229,7 +228,7 @@ export function ChatPanel({ onSelectDataset }: ChatPanelProps) {
                         <button
                           type="button"
                           className="text-left text-primary underline-offset-2 hover:underline"
-                          onClick={() => onSelectDataset(c.datasetId)}
+                          onClick={() => openDataset(c.datasetId)}
                         >
                           {c.titleBg}
                         </button>
@@ -281,7 +280,7 @@ export function ChatPanel({ onSelectDataset }: ChatPanelProps) {
           </div>
         )}
         <div className="relative rounded-3xl border border-input bg-background shadow-sm focus-within:ring-2 focus-within:ring-ring">
-          <textarea
+          <Textarea
             aria-label="Въпрос"
             value={input}
             rows={1}
@@ -293,7 +292,9 @@ export function ChatPanel({ onSelectDataset }: ChatPanelProps) {
               }
             }}
             placeholder="Попитайте за публичните данни…"
-            className="max-h-40 w-full resize-none bg-transparent py-3 pr-12 pl-12 text-sm placeholder:text-muted-foreground focus-visible:outline-none"
+            // Transparent composer (the border/ring live on the wrapper): neutralise the primitive's
+            // own border/background/shadow/min-height/ring via overrides rather than a parallel class.
+            className="max-h-40 min-h-0 resize-none rounded-none border-0 bg-transparent py-3 pr-12 pl-12 shadow-none focus-visible:ring-0"
           />
           <button
             type="button"
