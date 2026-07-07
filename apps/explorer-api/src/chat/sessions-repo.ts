@@ -7,7 +7,16 @@ import type { Database } from 'bun:sqlite';
 import { nowIso } from '../../../../src/lib/time.ts';
 import { DEFAULT_TENANT_ID } from '../../../../src/store/repos/tenants.ts';
 import type { Citation, MapAnchor } from './grounding.ts';
-import type { ChatMessage, Conversation, ConversationStore, MessageUsage } from './session.ts';
+import type {
+  ChatMessage,
+  Conversation,
+  ConversationStore,
+  MessageUsage,
+  SessionSummary,
+} from './session.ts';
+// Single source of the sessions-route response shapes lives in ./session.ts (shared with the SPA —
+// spec 059 FR-422); re-exported so existing `from './sessions-repo.ts'` imports keep working.
+export type { SessionSummary } from './session.ts';
 
 const TITLE_MAX = 80;
 
@@ -25,12 +34,6 @@ interface MessageRow {
   anchors_json: string | null;
   usage_json: string | null;
   duration_ms: number | null;
-}
-
-export interface SessionSummary {
-  id: string;
-  title: string | null;
-  updatedAt: string;
 }
 
 function parse<T>(json: string | null): T | undefined {

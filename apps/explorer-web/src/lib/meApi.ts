@@ -28,31 +28,15 @@ export async function setMyAvatar(avatarUrl: string | null): Promise<void> {
   if (!res.ok) throw new Error(`avatar update failed: ${res.status}`);
 }
 
-// Resumable chat history (token persistence).
-export interface SessionSummary {
-  id: string;
-  title: string | null;
-  updatedAt: string;
-}
-
-export interface SessionMessage {
-  role: 'user' | 'assistant';
-  content: string;
-  citations?: import('../types.ts').Citation[];
-  /** Grounded map anchor for an assistant turn — its geoEntityIds re-select the regions on resume. */
-  anchors?: import('../types.ts').MapAnchor;
-  /** Assistant turns: tokens consumed + reply duration (ms), kept with the message. */
-  usage?: { inputTokens: number; outputTokens: number; cachedInputTokens: number };
-  durationMs?: number;
-}
-
-export interface ResumedSession {
-  sessionId: string;
-  messages: SessionMessage[];
-  contextDatasetIds: string[];
-  /** Present when a generation is still running for this session (re-attach via resumeChat). */
-  streaming?: { messageId: string };
-}
+// Resumable chat history (token persistence). The sessions-route response shapes are single-sourced
+// from the API (spec 059 FR-422); `SessionMessage` is the API's stored-turn type (`ChatMessage`).
+import type {
+  ChatMessage,
+  ResumedSession,
+  SessionSummary,
+} from '../../../explorer-api/src/chat/session.ts';
+export type { ResumedSession, SessionSummary };
+export type SessionMessage = ChatMessage;
 
 export async function listSessions(): Promise<SessionSummary[]> {
   const res = await fetch('/api/me/sessions', { credentials: 'include' });

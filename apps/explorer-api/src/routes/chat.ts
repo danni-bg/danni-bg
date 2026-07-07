@@ -21,6 +21,7 @@ import type {
 import { billableTokens, effectiveLimit, quotaView } from '../chat/quota.ts';
 import { runChatTurn } from '../chat/run.ts';
 import { type ConversationStore, MAX_CONTEXT_DATASETS, windowMessages } from '../chat/session.ts';
+import { chatSSE } from '../chat/sse-events.ts';
 import { expandGeoUnitIds } from '../geo-rollup.ts';
 import type { Metrics } from '../metrics.ts';
 import type { ReadBridge } from '../read-bridge.ts';
@@ -325,11 +326,8 @@ export function chatHandler(deps: ChatRouteDeps) {
     });
 
     return streamSSE(c, async (stream) => {
-      await stream.writeSSE({
-        event: 'session',
-        data: JSON.stringify({ sessionId: conv.sessionId }),
-      });
-      await stream.writeSSE({ event: 'message', data: JSON.stringify({ messageId }) });
+      await stream.writeSSE(chatSSE('session', { sessionId: conv.sessionId }));
+      await stream.writeSSE(chatSSE('message', { messageId }));
       await streamGeneration(stream, deps.generations, messageId);
     });
   };
@@ -352,29 +350,24 @@ export async function streamGeneration(
     });
     if (!sub) {
       // Generation already evicted — nothing live to attach to.
-      void stream.writeSSE({ event: 'done', data: '{}' });
+      void stream.writeSSE(chatSSE('done', {}));
       resolve();
       return;
     }
     // Replay what's already been produced (for reconnects), then live events flow via the listener.
     const s = sub.snapshot;
-    if (s.text) void stream.writeSSE({ event: 'token', data: JSON.stringify({ delta: s.text }) });
-    if (s.citations)
-      void stream.writeSSE({
-        event: 'citations',
-        data: JSON.stringify({ citations: s.citations }),
-      });
-    if (s.anchors) void stream.writeSSE({ event: 'anchors', data: JSON.stringify(s.anchors) });
-    if (s.usage) void stream.writeSSE({ event: 'usage', data: JSON.stringify(s.usage) });
+    if (s.text) void stream.writeSSE(chatSSE('token', { delta: s.text }));
+    if (s.citations) void stream.writeSSE(chatSSE('citations', { citations: s.citations }));
+    if (s.anchors) void stream.writeSSE(chatSSE('anchors', s.anchors));
+    if (s.usage) void stream.writeSSE(chatSSE('usage', s.usage));
     if (s.status === 'done') {
-      void stream.writeSSE({ event: 'done', data: '{}' });
+      void stream.writeSSE(chatSSE('done', {}));
       sub.unsubscribe();
       resolve();
     } else if (s.status === 'error') {
-      void stream.writeSSE({
-        event: 'error',
-        data: JSON.stringify({ code: 'provider_error', message: s.error ?? 'chat failed' }),
-      });
+      void stream.writeSSE(
+        chatSSE('error', { code: 'provider_error', message: s.error ?? 'chat failed' }),
+      );
       sub.unsubscribe();
       resolve();
     }
@@ -393,25 +386,15 @@ function forwardEvent(
   stream: { writeSSE: (m: { event: string; data: string }) => unknown },
   e: GenEvent,
 ): void {
-  if (e.type === 'token')
-    void stream.writeSSE({ event: 'token', data: JSON.stringify({ delta: e.delta }) });
+  if (e.type === 'token') void stream.writeSSE(chatSSE('token', { delta: e.delta }));
   else if (e.type === 'tool')
-    void stream.writeSSE({
-      event: 'tool',
-      data: JSON.stringify({ name: e.name, status: e.status }),
-    });
+    void stream.writeSSE(chatSSE('tool', { name: e.name, status: e.status }));
   else if (e.type === 'citations')
-    void stream.writeSSE({ event: 'citations', data: JSON.stringify({ citations: e.citations }) });
-  else if (e.type === 'anchors')
-    void stream.writeSSE({ event: 'anchors', data: JSON.stringify(e.anchors) });
-  else if (e.type === 'grounding')
-    void stream.writeSSE({ event: 'grounding', data: JSON.stringify({ text: e.text }) });
-  else if (e.type === 'usage')
-    void stream.writeSSE({ event: 'usage', data: JSON.stringify(e.usage) });
-  else if (e.type === 'done') void stream.writeSSE({ event: 'done', data: '{}' });
+    void stream.writeSSE(chatSSE('citations', { citations: e.citations }));
+  else if (e.type === 'anchors') void stream.writeSSE(chatSSE('anchors', e.anchors));
+  else if (e.type === 'grounding') void stream.writeSSE(chatSSE('grounding', { text: e.text }));
+  else if (e.type === 'usage') void stream.writeSSE(chatSSE('usage', e.usage));
+  else if (e.type === 'done') void stream.writeSSE(chatSSE('done', {}));
   else if (e.type === 'error')
-    void stream.writeSSE({
-      event: 'error',
-      data: JSON.stringify({ code: 'provider_error', message: e.message }),
-    });
+    void stream.writeSSE(chatSSE('error', { code: 'provider_error', message: e.message }));
 }

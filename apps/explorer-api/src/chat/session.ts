@@ -1,7 +1,10 @@
 // In-memory, session-scoped conversation store (T048). Conversations are held only for the active
 // session and are NEVER persisted server-side (FR-019). Discarded when the process restarts.
 
-import type { Citation, MapAnchor } from './grounding.ts';
+// Import the shared payload types from the leaf SSE-events module (not grounding.ts, which pulls the
+// server-only read-bridge) so this module stays free of runtime deps and the SPA can `import type` its
+// message/session shapes without pulling bun:sqlite into its type graph (spec 059 FR-422).
+import type { Citation, MapAnchor } from './sse-events.ts';
 
 /** Tokens consumed by an assistant turn, kept with the message (shown after the reply). */
 export interface MessageUsage {
@@ -29,6 +32,19 @@ export interface Conversation {
    * so follow-ups stay grounded instead of relying on the model recalling the previous answer's prose.
    */
   contextDatasetIds: string[];
+}
+
+/** One row of `GET /api/me/sessions` (the user's saved conversations, most-recent first). */
+export interface SessionSummary {
+  id: string;
+  title: string | null;
+  updatedAt: string;
+}
+
+/** `GET /api/me/sessions/:id` — a resumed conversation, plus a live-generation handle when one is
+ * still streaming for it (re-attach via the generation stream). */
+export interface ResumedSession extends Conversation {
+  streaming?: { messageId: string };
 }
 
 /**

@@ -6,19 +6,10 @@
 
 import type { CuratedDatasetView } from '../../../../src/read/dataset-view.ts';
 import { geoEntityIdsOf } from '../read-bridge.ts';
-import type { FreshnessBlock } from '../schemas.ts';
-
-export interface Citation {
-  datasetId: string;
-  titleBg: string;
-  sourceUrl: string;
-  freshness: FreshnessBlock;
-}
-
-export interface MapAnchor {
-  geoEntityIds: string[];
-  datasetIds: string[];
-}
+// Citation & MapAnchor are owned by the leaf SSE-events module (single source, shared with the SPA —
+// spec 059 FR-420). Re-exported here so existing `from './grounding.ts'` imports keep working.
+export type { Citation, MapAnchor } from './sse-events.ts';
+import type { Citation, MapAnchor } from './sse-events.ts';
 
 export const SYSTEM_PROMPT = [
   'You are the danni-bg open-data assistant for Bulgaria.',
