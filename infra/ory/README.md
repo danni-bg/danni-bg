@@ -61,6 +61,10 @@ credentials over an unencrypted connection, and Mailpit accepts unauthenticated 
 
 - `kratos --dev` auto-runs migrations and relaxes some checks — **dev only**.
 - Secrets in `kratos.yaml` (`cookie`, `cipher`) are placeholders — **rotate for any non-local deploy**.
+- **Mailpit is dev-only** (spec 037). Recovery/verification emails carry account-takeover links, so a
+  production deploy must set `COURIER_SMTP_CONNECTION_URI` to a real SMTP relay — required alongside
+  `KRATOS_SECRETS_COOKIE`/`KRATOS_SECRETS_CIPHER` by the `check-secrets` gate, which also rejects
+  Mailpit/localhost-shaped URIs. The prod overlay never starts Mailpit (no `:14438`).
 - Identity schema is minimal (email + name). Roles/tiers live in the danni app DB
   (`users.role`), not in Kratos — see the spec.
 - **Passkeys (WebAuthn).** The `passkey` method is enabled (rp id `localhost`, origins `:8790` +

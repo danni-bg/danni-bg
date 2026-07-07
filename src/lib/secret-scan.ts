@@ -24,10 +24,26 @@ export const PLACEHOLDER_PATTERNS: readonly RegExp[] = [
 const SECRET_NAME =
   /(SECRET|PASSWORD|PASSWD|CIPHER|COOKIE|API_?KEY|TOKEN|PRIVATE_?KEY|DSN|DATABASE_URL)/i;
 
+/** An SMTP URI pointing at the dev Mailpit catcher or any loopback host — never a real relay. */
+const DEV_SMTP_HOST =
+  /\/\/(?:[^@/\s]*@)?(?:mailpit|localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:[/?]|$)/i;
+
+/**
+ * Per-variable VALUE validators for vars the generic `SECRET_NAME` regex does not cover (spec 037,
+ * FR-191). Returns true when the value is a placeholder / non-production value.
+ */
+const VALUE_CHECKS: Readonly<Record<string, (value: string) => boolean>> = {
+  // Kratos courier: recovery/verification mail is account-takeover material, so the URI must point
+  // at a real operator-configured relay — never the dev Mailpit sink or a loopback host.
+  COURIER_SMTP_CONNECTION_URI: (value) => isPlaceholder(value) || DEV_SMTP_HOST.test(value.trim()),
+};
+
 /** Secrets that MUST be present (and non-placeholder) on a non-dev profile. */
 export const REQUIRED_SECRETS: readonly string[] = [
   'KRATOS_SECRETS_COOKIE',
   'KRATOS_SECRETS_CIPHER',
+  // Spec 037 (FR-190): production account mail needs a real SMTP relay, not the dev Mailpit.
+  'COURIER_SMTP_CONNECTION_URI',
 ];
 
 export interface SecretViolation {
@@ -47,8 +63,9 @@ export function isPlaceholder(value: string): boolean {
 
 /**
  * Audit a resolved environment for placeholder/missing secrets. Returns no violations for a dev-like
- * profile; for any other profile, flags required secrets that are missing and any secret-named var
- * still holding a placeholder value.
+ * profile; for any other profile, flags required secrets that are missing, any secret-named var
+ * still holding a placeholder value, and any var whose `VALUE_CHECKS` validator rejects its value
+ * (e.g. a Mailpit-shaped courier SMTP URI, spec 037).
  */
 export function auditSecrets(
   env: Record<string, string | undefined>,
@@ -70,8 +87,11 @@ export function auditSecrets(
     }
   }
   for (const [name, value] of Object.entries(env)) {
-    if (flagged.has(name)) continue;
-    if (value && SECRET_NAME.test(name) && isPlaceholder(value)) {
+    if (flagged.has(name) || !value) continue;
+    const badValue = VALUE_CHECKS[name]
+      ? VALUE_CHECKS[name](value)
+      : SECRET_NAME.test(name) && isPlaceholder(value);
+    if (badValue) {
       violations.push({ name, reason: 'placeholder' });
       flagged.add(name);
     }
