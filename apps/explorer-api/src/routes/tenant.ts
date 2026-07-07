@@ -69,11 +69,19 @@ export function tenantRoutes(
       return c.json({ error: { code: 'not_found', message: 'no user with that email' } }, 404);
     }
     const role: TenantRole = parsed.data.role ?? 'member';
-    tenants.addMember(c.get('tenant').id, invitee.id, role);
+    // Insert-only (spec 036 FR-180): re-adding an existing member must never touch their role —
+    // otherwise "re-adding" the owner as `member` would silently strip ownership.
+    if (!tenants.addMember(c.get('tenant').id, invitee.id, role)) {
+      return c.json(
+        { error: { code: 'already_member', message: 'user is already a member of this org' } },
+        409,
+      );
+    }
     return c.json({ ok: true, member: { userId: invitee.id, email: invitee.email, role } }, 201);
   });
 
-  // Change a member's role. Only an owner may grant/transfer the owner role.
+  // Change a member's role. Only an owner may grant/transfer the owner role — or change an owner's
+  // role at all (spec 036 FR-181); and no path may demote the org's last owner (FR-182).
   app.patch('/members/:userId', requireTenantAdmin, async (c) => {
     let body: unknown;
     try {
@@ -86,15 +94,29 @@ export function tenantRoutes(
       return c.json({ error: { code: 'bad_request', message: 'invalid role' } }, 400);
     }
     const active = c.get('tenant');
-    if (parsed.data.role === 'owner' && active.role !== 'owner') {
+    const target = tenants.membershipOf(active.id, c.req.param('userId'));
+    if (!target) {
+      return c.json({ error: { code: 'not_found', message: 'no such member' } }, 404);
+    }
+    // Owner-gate both directions: granting `owner` AND any change targeting a current owner.
+    if ((parsed.data.role === 'owner' || target.role === 'owner') && active.role !== 'owner') {
       return c.json(
-        { error: { code: 'forbidden', message: 'only an owner can grant ownership' } },
+        { error: { code: 'forbidden', message: 'only an owner can grant or change ownership' } },
         403,
       );
     }
-    if (!tenants.setMemberRole(active.id, c.req.param('userId'), parsed.data.role)) {
-      return c.json({ error: { code: 'not_found', message: 'no such member' } }, 404);
+    // Demoting an owner must never leave the org ownerless.
+    if (
+      target.role === 'owner' &&
+      parsed.data.role !== 'owner' &&
+      tenants.ownerCount(active.id) <= 1
+    ) {
+      return c.json(
+        { error: { code: 'last_owner', message: 'cannot demote the last owner' } },
+        400,
+      );
     }
+    tenants.setMemberRole(active.id, target.userId, parsed.data.role);
     return c.json({ ok: true });
   });
 
@@ -110,14 +132,11 @@ export function tenantRoutes(
     if (!member) {
       return c.json({ error: { code: 'not_found', message: 'no such member' } }, 404);
     }
-    if (member.role === 'owner') {
-      const owners = tenants.membersOf(active.id).filter((m) => m.role === 'owner').length;
-      if (owners <= 1) {
-        return c.json(
-          { error: { code: 'bad_request', message: 'cannot remove the last owner' } },
-          400,
-        );
-      }
+    if (member.role === 'owner' && tenants.ownerCount(active.id) <= 1) {
+      return c.json(
+        { error: { code: 'bad_request', message: 'cannot remove the last owner' } },
+        400,
+      );
     }
     tenants.removeMember(active.id, target);
     return c.json({ ok: true });
