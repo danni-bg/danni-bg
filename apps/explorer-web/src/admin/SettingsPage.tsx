@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { type AdminSettings, type SettingsPut, getSettings, putSettings } from '../lib/adminApi.ts';
+import { useServerState } from '../lib/useServerState.ts';
 import { AdminUsage } from './AdminUsage.tsx';
 
 const INPUT =
@@ -38,11 +39,13 @@ export function SettingsPage() {
     setMaxOutputTokens(s.toggles.maxOutputTokens ? String(s.toggles.maxOutputTokens) : '');
   }
 
+  // Seed the form from the current settings once loaded; a load failure surfaces the error banner.
+  const settingsQuery = useServerState('admin:settings', getSettings);
+  // `hydrate` (setter-only, stable) is deliberately not in the deps to avoid a re-hydrate loop.
   useEffect(() => {
-    getSettings()
-      .then(hydrate)
-      .catch(() => setError('Неуспешно зареждане на настройките.'));
-  }, []);
+    if (settingsQuery.data) hydrate(settingsQuery.data);
+    else if (settingsQuery.status === 'error') setError('Неуспешно зареждане на настройките.');
+  }, [settingsQuery.data, settingsQuery.status]);
 
   async function onSave(e: React.FormEvent) {
     e.preventDefault();

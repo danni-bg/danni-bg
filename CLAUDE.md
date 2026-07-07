@@ -234,6 +234,23 @@ capabilities each have their own spec:
   event/field change breaks both sides (FR-420..425). Web-facing sources are leaf modules
   (`schemas.ts`→zod-only, `sse-events.ts`/`session.ts`→no `bun:sqlite`) so the web type graph never
   pulls server runtime. Transport unification is spec 057; the chat lifecycle hook is spec 058
+- 057 frontend server-state layer: the SPA now has ONE way to fetch, cache, and surface server state
+  — including its failures. A single `request<T>(path, {method,body,params,authed})`
+  (`lib/http.ts`, owns `buildUrl` + JSON headers + `credentials:'include'` when authed + non-OK →
+  typed `HttpError`) is the sole HTTP convention; `lib/api.ts`/`meApi.ts`/`adminApi.ts` are thin
+  typed facades that delegate to it (no hand-rolled `fetch → !res.ok → json` remains, FR-400). One
+  in-house `useServerState(key, loader)` hook (`lib/useServerState.ts`; a framework-agnostic
+  `runQuery` core unit-tested without a DOM, per the useChatSession precedent — NOT TanStack, FR-401)
+  owns loading/error/data + cancel-on-unmount/key-change + in-flight dedup; the ~10 hand-rolled
+  `fetch+useEffect+cancelled-flag` blocks (App regions/dataset-list, FilterPanel facets,
+  DatasetDetail, ResourcePreview, SelfUsage, ApiKeys, AdminUsage, admin/SettingsPage) are converted
+  (FR-402). Every core fetch now DISTINGUISHES "loaded empty" from "failed": the `.catch(()=>
+  undefined)` swallows (App map layers/dataset list + FilterPanel facets) and the admin
+  limit/reset void-discarded rejections are replaced with a shared error+retry affordance
+  (`components/StatusMessage.tsx` `Loading`/`ErrorState`; the seven `Зареждане…` strings collapse to
+  one, FR-403/405); admin save/reset go through non-throwing `admin/adminUsageActions.ts` that keep
+  the attempted value on failure (FR-404). Behavior-preserving on the happy path (FR-406). Type
+  single-sourcing is spec 059; the chat SSE lifecycle is spec 058 (untouched)
 
 - 054 pipeline robustness (three independent papercuts, "failure/efficiency behavior is explicit,
   not incidental"): (a) curator selection sniffed the format by `readFileSync`-ing the WHOLE file to

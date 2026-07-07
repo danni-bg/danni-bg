@@ -1,9 +1,11 @@
 import { ArrowDown, ArrowUp, Download, Filter, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { ErrorState, Loading } from '../components/StatusMessage.tsx';
 import { fetchResourceRows } from '../lib/api.ts';
 import { cn } from '../lib/cn.ts';
 import { type GridSort, cycleSort, hasActiveFilters } from '../lib/grid.ts';
 import { cellText, tableColumns, toCsv } from '../lib/table.ts';
+import { useServerState } from '../lib/useServerState.ts';
 import type { ResourceContent } from '../types.ts';
 
 const PAGE = 50;
@@ -52,7 +54,6 @@ export function ResourcePreview({
   const [content, setContent] = useState<ResourceContent | null>(null);
   const [rows, setRows] = useState<unknown[]>([]);
   const [offset, setOffset] = useState(0);
-  const [error, setError] = useState(false);
   const [sort, setSort] = useState<GridSort | null>(null);
   const [colFilters, setColFilters] = useState<Record<string, string>>({}); // instant (input)
   const [appliedFilters, setAppliedFilters] = useState<Record<string, string>>({}); // debounced (sent)
@@ -65,7 +66,6 @@ export function ResourcePreview({
     setRows([]);
     setOffset(0);
     setContent(null);
-    setError(false);
     setSort(null);
     setColFilters({});
     setAppliedFilters({});
@@ -88,20 +88,22 @@ export function ResourcePreview({
     return () => clearTimeout(id);
   }, [colFilters, appliedFilters]);
 
-  // Sort + filter are applied server-side over the whole resource; offset===0 replaces, else appends.
+  // Sort + filter are applied server-side over the whole resource. The keyed query owns load/cancel;
+  // the key's cancellation guarantees the resolved page matches the current offset (FR-401/FR-402).
+  const pageKey = JSON.stringify({ datasetId, resourceId, offset, sort, appliedFilters });
+  const rowsQuery = useServerState(pageKey, () =>
+    fetchResourceRows(datasetId, resourceId, PAGE, offset, { sort, filters: appliedFilters }),
+  );
+  // Apply each fetched page exactly once (a ref guards a StrictMode double-invoke): offset===0
+  // replaces, else appends.
+  const appliedRef = useRef<ResourceContent | null>(null);
   useEffect(() => {
-    let cancelled = false;
-    fetchResourceRows(datasetId, resourceId, PAGE, offset, { sort, filters: appliedFilters })
-      .then((c) => {
-        if (cancelled) return;
-        setContent(c);
-        setRows((prev) => (offset === 0 ? c.rows : [...prev, ...c.rows]));
-      })
-      .catch(() => !cancelled && setError(true));
-    return () => {
-      cancelled = true;
-    };
-  }, [datasetId, resourceId, offset, sort, appliedFilters]);
+    const c = rowsQuery.data;
+    if (!c || c === appliedRef.current) return;
+    appliedRef.current = c;
+    setContent(c);
+    setRows((prev) => (offset === 0 ? c.rows : [...prev, ...c.rows]));
+  }, [rowsQuery.data, offset]);
 
   const filtering = hasActiveFilters(appliedFilters);
   // What kind of content this resource is — decided by shape, not by how many rows are loaded, so a
@@ -157,8 +159,10 @@ export function ResourcePreview({
         </div>
       </div>
 
-      {error && <p className="text-sm text-destructive">Грешка при зареждане на данните.</p>}
-      {!content && !error && <p className="text-sm text-muted-foreground">Зареждане…</p>}
+      {rowsQuery.status === 'error' && (
+        <ErrorState message="Грешка при зареждане на данните." onRetry={rowsQuery.refetch} />
+      )}
+      {!content && rowsQuery.status !== 'error' && <Loading />}
 
       {content && isTable && (
         <>

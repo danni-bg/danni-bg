@@ -18,7 +18,12 @@ afterEach(() => {
 function stubFetch(captured: { url?: string }, body: unknown, ok = true): void {
   globalThis.fetch = (async (input: string | URL | Request) => {
     captured.url = typeof input === 'string' ? input : input.toString();
-    return { ok, status: ok ? 200 : 500, json: async () => body } as unknown as Response;
+    // The shared `request` helper reads the body via `text()` (parse-if-non-empty).
+    return {
+      ok,
+      status: ok ? 200 : 500,
+      text: async () => JSON.stringify(body),
+    } as unknown as Response;
   }) as typeof fetch;
 }
 
