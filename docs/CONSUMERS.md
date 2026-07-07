@@ -39,11 +39,20 @@ A read-only [Model Context Protocol](https://modelcontextprotocol.io) server ove
 | `mirror_search` | `query` (string, bg/en), `lang?` (`bg`\|`en`\|`auto`), `limit?` (1–50, default 5) | Ranked `IndexEntry[]` — `datasetId`, `title` (bg/en), `publisher`, `matchKind`, `sourceUrl`, `curatedDatasetPath`, `freshness`. |
 | `mirror_entity_search` | `entityId` (string), `limit?` (1–50, default 50) | Datasets linked to that entity, with the matched entity label. |
 | `mirror_info` | `datasetId` (string) | The full curated-dataset record: title/description (bg+en), publisher, resources (with `curatedPath` + schema), entities, cross-dataset links, freshness. |
-| `read_resource` | `datasetId`, `resourceId`, `limit?` (1–1000, default 100), `offset?` | The resource's curated content: paginated `rows` (tabular/NDJSON or JSON array), a single `document` (JSON/GeoJSON object), or `text` (XML/text). |
+| `read_resource` | `datasetId`, `resourceId`, `limit?` (1–1000, default 100), `offset?`, `filters?` (object: EXACT column → case-insensitive substring), `sort?` (`{col, dir?}`, `dir` = `asc`\|`desc`, default `asc`) | The resource's curated content: paginated `rows` (tabular/NDJSON or JSON array), a single `document` (JSON/GeoJSON object), or `text` (XML/text). |
 
 Tool failures (unknown dataset, bad arguments) come back as a result with `isError: true` and a
 message — they do not crash the session. A typical agent flow: `mirror_search` → `mirror_info` to
 inspect resources → `read_resource` to pull the rows it needs, citing the `sourceUrl` it found.
+
+To answer a value question without paging the whole artifact through the model, pass `filters` — a
+map of **exact column name → case-insensitive substring** (e.g. `{"rayon": "Панчарево"}`). Every
+entry must match (AND), and the tool returns only matching `rows`. An optional `sort` orders the
+whole resource before pagination (`{"col": "name", "dir": "asc"}`). `filters`/`sort` apply only to
+tabular/JSON-array rows and are the same server-side grid the explorer chat and HTTP API use (specs
+009/010/017): the scan is capped at `MAX_GRID_SCAN` (100 000) rows, and when a filter/sort saw only
+that prefix of a larger resource the response sets `gridTruncated: true`. A malformed `filters`/`sort`
+shape returns `isError: true`, not a crash.
 
 > The semantic half of `mirror_search` is only as good as the configured embedder — wire a real one
 > (see [`semantic-search.md`](./semantic-search.md)); otherwise only the keyword leg is meaningful.
