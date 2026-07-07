@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "test:e2e": "vite build && E2E_PREVIEW=1 playwright test"
   }
 }

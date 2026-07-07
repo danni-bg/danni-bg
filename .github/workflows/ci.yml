@@ -38,12 +38,65 @@ jobs:
         run: |
           bun run --bun tests/parity-matrix-check.ts
 
+  # Browser e2e gate (spec 046, FR-280..284). Runs the Playwright suite headless (chromium) against
+  # the PRODUCTION BUILD of the SPA — `vite build` + `vite preview` as the webServer (FR-282), not the
+  # dev server — so bundler/env-inlining regressions are caught. Hermetic: every `/api/**` and Kratos
+  # route is stubbed in-page via `page.route` (apps/explorer-web/e2e/fixtures.ts), so there is no live
+  # mirror, LLM, or Ory stack (FR-281). All committed `.e2e.ts` specs run — no CI-side skip list
+  # (FR-283). The `image` publish job depends on this gate (FR-280): a failing spec blocks merge+publish.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15 # SC-3 target is ≤10 min; the cap fails a hang fast (FR-284)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.6'
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Cache the chromium binary so warm runs skip the download (FR-284, SC-3). Keyed on the lockfile
+      # so a Playwright bump (pinned in bun.lock) invalidates it.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      # Installs the chromium binary (no-op when cached) plus its OS deps (apt, always).
+      - name: Install Playwright chromium
+        run: bunx playwright install --with-deps chromium
+
+      # `test:e2e` = `vite build && E2E_PREVIEW=1 playwright test` (FR-282). CI=1 → 1 retry, fresh
+      # server, github + html reporters (playwright.config.ts).
+      - name: E2E (build → preview → chromium)
+        working-directory: apps/explorer-web
+        run: bun run test:e2e
+
+      # Traces (on first retry) + screenshots (on failure) + the HTML report, uploaded on failure only
+      # (FR-284).
+      - name: Upload Playwright report
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            apps/explorer-web/playwright-report
+            apps/explorer-web/test-results
+          retention-days: 7
+          if-no-files-found: ignore
+
   # Build + push the app image to GHCR (spec 030, FR-137), after the hermetic test gate. Uses the
   # built-in GITHUB_TOKEN (packages: write) — no PAT. Tags:
   #   push to main      → :edge, :acceptance, :sha-<short>   (the acceptance overlay tracks :acceptance)
   #   tag vX.Y.Z        → :X.Y.Z, :X.Y, :stable, :latest      (the prod overlay pins :stable → a digest)
   image:
-    needs: build-test
+    needs: [build-test, e2e]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
