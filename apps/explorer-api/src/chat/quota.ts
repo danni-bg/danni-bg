@@ -40,3 +40,19 @@ export function quotaView(used: number, limit: number): QuotaView {
     exceeded: !unlimited && used >= limit,
   };
 }
+
+/**
+ * FR-213 (spec 039): the token quota is enforced check-then-record — the gate reads `token_usage`
+ * before the turn, the usage write lands after it — so N turns a user fires concurrently all read the
+ * same total and all pass the same pre-check. We CONSCIOUSLY accept this rather than serialize a
+ * user's turns behind a lock: this is a single-node, in-process server metering a *soft* token budget,
+ * and a distributed/per-user lock would be over-engineering (YAGNI) for a limit that already tolerates
+ * a small overshoot. The overrun is bounded, not open-ended: only the turns beyond the first can
+ * overrun (the first is legitimately admitted at/under quota), and each in-flight turn bills at most
+ * its `maxOutputTokens`-derived per-turn cost, so the worst case is (concurrentTurns − 1) × perTurnCost.
+ * The transport layer already caps a session to one live generation, which keeps `concurrentTurns`
+ * small in practice.
+ */
+export function maxConcurrentOverrun(concurrentTurns: number, perTurnCost: number): number {
+  return Math.max(0, Math.trunc(concurrentTurns) - 1) * Math.max(0, perTurnCost);
+}

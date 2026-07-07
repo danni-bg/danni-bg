@@ -79,6 +79,16 @@ capabilities each have their own spec:
   list/read/delete + generation stream/stop), any-key (`allowAnyKey`: `GET /usage`+`/api-usage`
   self-introspection). Closes the gap where a leaked `read` key could read/delete chat history, stop
   live generations, and overwrite the avatar; a route enumeration test fails on any undeclared surface
+- 039 chat metering integrity: the token quota was checked-then-recorded, so an errored/aborted/stopped
+  turn consumed unmetered provider tokens. `chatHandler` now meters the tokens billed on EVERY exit path
+  (`routes/chat.ts`): `onStepFinish`/`onUsage` accumulates per-step usage, a single-fire `meter()`
+  records the peak-vs-reconciled total once per turn (FR-210/211; a graceful stop that resolves
+  `totalUsage` to 0 falls back to the streamed accumulation), and reconnect/replay never re-records
+  (FR-214). The token-quota 429 keeps its `used`/`limit` body and states no auto-reset via
+  `details.resetsAt: null` — there is no scheduled reset to advertise (`usage_reset_at` is manual-only),
+  with a Retry-After seam for when one exists (FR-212). The concurrent check-then-record overrun is a
+  conscious, documented + tested bound (`quota.ts` `maxConcurrentOverrun` = (concurrentTurns−1) ×
+  per-turn cost), not a distributed lock (FR-213). Rejection metrics stay spec 045 — builds on 021/028
 - 041 tenant activation (reachable non-default orgs): fulfils spec 029's FR-128/FR-132 beyond the
   `default` org. The active org is now an explicit, PERSISTED per-user selection (`users.active_tenant_id`,
   migration 018) — `requireAuth` resolves it via `TenantsRepo.activeMembership` (falls back to the
