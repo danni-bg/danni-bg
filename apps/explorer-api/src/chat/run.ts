@@ -54,8 +54,9 @@ export interface ChatTurnResult {
   usage?: TokenUsage | undefined;
 }
 
-/** Read token usage off a streamText result; tolerates providers that omit fields. */
-async function readUsage(result: { totalUsage: PromiseLike<unknown> }): Promise<TokenUsage> {
+/** Read token usage off a streamText result; tolerates providers that omit fields (and a rejected
+ * `totalUsage` promise — a defensive fallback to zeros). Exported for direct unit coverage. */
+export async function readUsage(result: { totalUsage: PromiseLike<unknown> }): Promise<TokenUsage> {
   try {
     const u = (await result.totalUsage) as
       | {

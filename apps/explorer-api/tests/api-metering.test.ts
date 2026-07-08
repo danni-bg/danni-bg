@@ -217,6 +217,18 @@ describe('API metering (spec 028; principal/limit semantics spec 040)', () => {
     );
   });
 
+  it('rejects an expired key on the data API with a distinct code', async () => {
+    s = setup();
+    const expired = s.apiKeys.create({
+      userId: s.owner.id,
+      name: 'e',
+      expiresAt: '2000-01-01T00:00:00.000Z',
+    });
+    const res = await s.app.request('/data', bearer(expired.plaintext));
+    expect(res.status).toBe(401);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('api_key_expired');
+  });
+
   it('meters + rate-limits the chat route', async () => {
     s = setup({ rateChat: 1 });
     const { plaintext } = s.apiKeys.create({ userId: s.owner.id, name: 'k' });

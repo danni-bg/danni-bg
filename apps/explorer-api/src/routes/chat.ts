@@ -70,6 +70,11 @@ export interface ChatRouteDeps {
   chatEnabled?: (tenantId?: string) => boolean;
   /** Telemetry registry (spec 032): chat outcome + LLM tokens/cost are recorded when wired. */
   metrics?: Metrics;
+  /** When the user's token window next resets, if that time is knowable — else null. Injectable seam
+   * for FR-212 (spec 039): the built-in default always returns null (token resets are manual/admin-only),
+   * so no Retry-After is advertised; a future scheduled-reset feature supplies a real time here without
+   * touching the 429 shape. Overridable in tests to exercise the Retry-After path. */
+  quotaResetsAt?: (user: UserRow) => string | null;
 }
 
 /**
@@ -116,7 +121,7 @@ export function chatHandler(deps: ChatRouteDeps) {
         // reset time is knowable; while token resets stay manual/admin-only (`users.usage_reset_at`
         // marks the window START, not a scheduled end — spec 021), no such time exists, so state that
         // explicitly via `resetsAt: null` rather than silently omitting retry semantics.
-        const resetsAt = quotaResetsAt(user);
+        const resetsAt = (deps.quotaResetsAt ?? quotaResetsAt)(user);
         if (resetsAt) {
           const secs = Math.max(1, Math.ceil((Date.parse(resetsAt) - Date.now()) / 1000));
           c.header('Retry-After', String(secs));

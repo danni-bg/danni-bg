@@ -95,6 +95,22 @@ describe('GET/PUT /api/admin/settings', () => {
     expect(stored.model).toBe('m2');
   });
 
+  it('GET reports source=env with a null LLM when nothing is configured', async () => {
+    // No persisted setting and no EXPLORER_DEFAULT_* env → resolveDefaultView's env fallthrough.
+    const savedP = process.env.EXPLORER_DEFAULT_PROVIDER;
+    const savedM = process.env.EXPLORER_DEFAULT_MODEL;
+    delete process.env.EXPLORER_DEFAULT_PROVIDER;
+    delete process.env.EXPLORER_DEFAULT_MODEL;
+    try {
+      const body = (await (await get(ADMIN)).json()) as { source: string; llm: unknown };
+      expect(body.source).toBe('env');
+      expect(body.llm).toBeNull();
+    } finally {
+      if (savedP !== undefined) process.env.EXPLORER_DEFAULT_PROVIDER = savedP;
+      if (savedM !== undefined) process.env.EXPLORER_DEFAULT_MODEL = savedM;
+    }
+  });
+
   it('PUT toggles round-trips', async () => {
     await put(ADMIN, { toggles: { chatEnabled: false, defaultTokenLimit: 3600 } });
     const body = (await (await get(ADMIN)).json()) as { toggles: unknown };

@@ -294,6 +294,67 @@ describe('explorer API routes', () => {
     expect(st?.oblastEntityId).toBe('geo:bg-oblast-sofia-grad');
   });
 
+  it('GET /api/datasets?geoUnitIds expands the geo filter via the part_of children map', async () => {
+    // A non-empty geoUnitIds filter drives expandGeo → childrenOf() → bridge.partOfChildren()
+    // (app.ts 348-349); d1 + d2 are linked directly to the oblast so they stay in scope.
+    const res = await app.request('/api/datasets?geoUnitIds=geo:bg-oblast-sofia-grad');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { datasets: { datasetId: string }[] };
+    // d1 + d2 are linked directly to the oblast, so they are in the expanded scope.
+    expect(body.datasets.map((d) => d.datasetId).sort()).toEqual(['d1', 'd2']);
+  });
+
+  it('GET /api/regions?level=oblast ignores a geo link that is neither oblast nor municipality', async () => {
+    // A settlement-level geo link rolls up to nothing at the oblast level (app.ts final `return []`).
+    new DatasetsRepo(db).upsert({
+      id: 'd5',
+      slug: 'd5',
+      titleBg: 'Селищен',
+      tags: [],
+      groups: [],
+      sourceUrl: 'https://x/d5',
+    });
+    const ents = new EntitiesRepo(db);
+    ents.upsert({ id: 'geo:bg-ekatte-12345', kind: 'geographic_unit', canonicalLabelBg: 'Село' });
+    ents.upsert({
+      id: 'geo:bg-ekatte-67890',
+      kind: 'geographic_unit',
+      canonicalLabelBg: 'Друго село',
+    });
+    ents.attach({
+      datasetId: 'd5',
+      entityId: 'geo:bg-ekatte-12345',
+      extractor: 'g',
+      confidence: 0.7,
+    });
+    // A SECOND geo link on the same dataset (also non-oblast/non-municipality) makes listLite sort
+    // its geoLinks (read-bridge.ts sort comparator, which only runs on ≥2 entries) without changing
+    // any oblast roll-up count.
+    ents.attach({
+      datasetId: 'd5',
+      entityId: 'geo:bg-ekatte-67890',
+      extractor: 'g',
+      confidence: 0.5,
+    });
+    const body = (await (await app.request('/api/regions?level=oblast')).json()) as {
+      regions: { entityId: string | null; datasetCount: number }[];
+    };
+    // The settlement link contributes to no oblast; Sofia-grad still counts only its direct d1 + d2.
+    expect(body.regions.find((r) => r.entityId === 'geo:bg-oblast-sofia-grad')?.datasetCount).toBe(
+      2,
+    );
+  });
+
+  it('GET resource rows applies a valid JSON column filter', async () => {
+    // A well-formed ?filters JSON object drives the parse-success branch (app.ts 444-449).
+    const res = await app.request(
+      `/api/datasets/d1/resources/r1/rows?limit=10&filters=${encodeURIComponent(JSON.stringify({ col: 'x', ignored: 5 }))}`,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { datasetId: string };
+    expect(body.datasetId).toBe('d1');
+  });
+
   it('GET /api/facets returns in-scope tag/publisher/freshness counts', async () => {
     const res = await app.request('/api/facets');
     const body = (await res.json()) as {

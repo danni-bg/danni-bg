@@ -15,6 +15,8 @@ import { LocalOnnxEmbedder } from '../../../src/index/embedders/local-onnx.ts';
 import { runIndex } from '../../../src/index/run-index.ts';
 import { openDb } from '../../../src/store/db.ts';
 import { runMigrations } from '../../../src/store/migrate.ts';
+import { ApiKeyRepo } from '../../../src/store/repos/api-keys.ts';
+import { ApiUsageRepo } from '../../../src/store/repos/api-usage.ts';
 import { DatasetsRepo } from '../../../src/store/repos/datasets.ts';
 import { EntitiesRepo } from '../../../src/store/repos/entities.ts';
 import { ResourcesRepo } from '../../../src/store/repos/resources.ts';
@@ -275,6 +277,38 @@ describe('chat metering integrity (spec 039)', () => {
     expect(body.error.code).toBe('quota_exceeded');
     expect(body.error.details.limit).toBe(50);
     expect(body.error.details.resetsAt).toBeNull();
+  });
+
+  it('a keyed chat request passes through the chatMeter (data-API config resolves rateChat)', async () => {
+    // Wiring an api-usage repo mounts chatMeter on /api/chat; a chat-scoped API key travels it, so the
+    // app's meterConfig.rateChat closure runs and the chat request is recorded against the key.
+    const apiKeys = new ApiKeyRepo(db);
+    const apiUsage = new ApiUsageRepo(db);
+    const { plaintext, view } = apiKeys.create({ userId, name: 'chat-key', scopes: ['chat'] });
+    const ctx: AppContext = {
+      bridge,
+      crosswalk: new Crosswalk(loadCrosswalk()),
+      users,
+      tokenUsage,
+      apiKeys,
+      apiUsage,
+      health: () => ({ lastSyncedAt: null, isStale: true, defaultProvider: 'absent' }),
+      chat: {
+        sessions: new SessionStore(() => 'sess-keyed'),
+        serverDefault: null,
+        selectModel: () => mockModel([textStep('Има данни.', 5, 3)]) as unknown as LanguageModel,
+      },
+    };
+    const app = createApp(ctx);
+    const res = await app.request('/api/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${plaintext}` },
+      body: JSON.stringify({ message: 'има ли данни' }),
+    });
+    expect(res.status).toBe(200);
+    await res.text();
+    // chatMeter recorded the keyed chat request (proving the middleware — and rateChat — ran).
+    expect(apiUsage.countSinceForKey(view.id, '2000-01-01T00:00:00.000Z', 'chat')).toBe(1);
   });
 
   // Spec 045 SC-3 / FR-272: the token-quota 429 increments danni_quota_rejections_total{kind="tokens"}

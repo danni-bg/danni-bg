@@ -160,6 +160,20 @@ describe('Tenant-scoped settings (spec 042)', () => {
     });
   });
 
+  it('an org admin can clear the LLM override by writing llm: null', async () => {
+    // Set an override, then clear it with an explicit null → applyTenantSettings clears the tenant row.
+    await putTenantSettings(ownerA, {
+      llm: { kind: 'openai-compatible', model: 'acme-model', apiKey: 'sk-acme' },
+    });
+    expect(s.settings.own('llm.default', acme.id)).not.toBeNull();
+
+    const cleared = await putTenantSettings(ownerA, { llm: null });
+    expect(cleared.status).toBe(200);
+    expect(s.settings.own('llm.default', acme.id)).toBeNull();
+    const body = (await cleared.json()) as { llm: { overridden: boolean } };
+    expect(body.llm.overridden).toBe(false);
+  });
+
   it('SC-3 / FR-241: overriding a non-allowlisted key is 4xx and writes nothing', async () => {
     // A platform toggle / api rate knob is not in the tenant allowlist — .strict() rejects it.
     const bad = await putTenantSettings(ownerA, { apiRateData: 5 });
