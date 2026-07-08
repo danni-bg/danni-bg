@@ -72,6 +72,7 @@ describe('main()', () => {
   let dir: string;
   const savedStore = process.env.DANNI_STORE_ROOT;
   const savedPort = process.env.EXPLORER_API_PORT;
+  const savedConfig = process.env.DANNI_CONFIG;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'danni-main-'));
@@ -80,6 +81,9 @@ describe('main()', () => {
     runMigrations(db, join(ROOT, 'migrations'));
     db.close();
     process.env.DANNI_STORE_ROOT = dir;
+    // loadConfig() reads danni.config.json, which is gitignored (absent on a clean CI checkout).
+    // Point at the committed example config; DANNI_STORE_ROOT overrides its store path to `dir`.
+    process.env.DANNI_CONFIG = join(ROOT, 'danni.config.example.json');
   });
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
@@ -87,6 +91,8 @@ describe('main()', () => {
     else process.env.DANNI_STORE_ROOT = savedStore;
     if (savedPort === undefined) delete process.env.EXPLORER_API_PORT;
     else process.env.EXPLORER_API_PORT = savedPort;
+    if (savedConfig === undefined) delete process.env.DANNI_CONFIG;
+    else process.env.DANNI_CONFIG = savedConfig;
   });
 
   it('wires the app and passes serve options (default port) without binding a socket', async () => {
