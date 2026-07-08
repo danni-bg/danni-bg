@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { ZodError } from 'zod';
 import { loadConfig } from '../config/loader.ts';
 import { type ScopeConfig, ScopeConfigSchema } from '../config/schema.ts';
 import { buildPortalHttp, runPortalSync } from '../crawler/portal-sync.ts';
@@ -35,16 +34,13 @@ export function parseScopeArg(
       `--scope is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-  try {
-    return ScopeConfigSchema.parse(parsed);
-  } catch (err) {
-    if (err instanceof ZodError) {
-      throw new Error(
-        `--scope failed validation: ${err.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
-      );
-    }
-    throw err;
+  const result = ScopeConfigSchema.safeParse(parsed);
+  if (!result.success) {
+    throw new Error(
+      `--scope failed validation: ${result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
+    );
   }
+  return result.data;
 }
 
 export function parseFlags(args: string[]): SyncFlags {
@@ -82,7 +78,13 @@ export function parseFlags(args: string[]): SyncFlags {
   return flags;
 }
 
-export async function run(args: string[]): Promise<number> {
+/** Injectable seam (tests): the heavy/networked sync runner. Defaults to the real implementation. */
+export interface SyncRunDeps {
+  runPortalSync?: typeof runPortalSync;
+}
+
+export async function run(args: string[], deps: SyncRunDeps = {}): Promise<number> {
+  const runPortalSyncFn = deps.runPortalSync ?? runPortalSync;
   let flags: SyncFlags;
   try {
     flags = parseFlags(args);
@@ -103,7 +105,7 @@ export async function run(args: string[]): Promise<number> {
     const notifier = createNotifier({ config: config.schedule.notifier });
 
     try {
-      const sync = await runPortalSync({
+      const sync = await runPortalSyncFn({
         db,
         config,
         http,

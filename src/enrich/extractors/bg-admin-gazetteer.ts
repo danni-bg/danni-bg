@@ -2,7 +2,11 @@ import type { EntityCandidate, ExtractContext, Extractor } from '../extractor.ts
 import { findGazetteerMatches } from '../gazetteer/bg-admin.ts';
 
 export class BgAdminGazetteerExtractor implements Extractor {
-  readonly id = 'bg_admin_gazetteer';
+  readonly id: string;
+
+  constructor() {
+    this.id = 'bg_admin_gazetteer';
+  }
 
   async extract(ctx: ExtractContext): Promise<EntityCandidate[]> {
     const haystack = [

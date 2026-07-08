@@ -22,6 +22,14 @@ describe('compareCells', () => {
     expect(compareCells('Дружба', 'Надежда')).toBeLessThan(0);
     expect(compareCells('', 'x')).toBeGreaterThan(0);
   });
+  it('treats non-number/non-string cells as non-numeric (boolean/object/null)', () => {
+    // A boolean is neither number nor string → isNumeric hits its final `return false`, so the pair
+    // falls through to text comparison rather than numeric subtraction.
+    expect(compareCells(true, 5)).not.toBe(0);
+    expect(compareCells(true, true)).toBe(0);
+    // Objects stringify; null renders blank and sorts last.
+    expect(compareCells({ a: 1 }, null)).toBeLessThan(0);
+  });
 });
 
 describe('sortRows', () => {

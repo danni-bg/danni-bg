@@ -124,4 +124,21 @@ describe('crawler.RobotsCache', () => {
     // A different host with the same blanket-disallow is still blocked.
     expect(await cache.isAllowed('https://other.example/x', 'danni')).toBe(false);
   });
+
+  it('uses the built-in fetcher (global fetch) when none is injected', async () => {
+    const original = globalThis.fetch;
+    const seen: string[] = [];
+    globalThis.fetch = (async (url: string) => {
+      seen.push(String(url));
+      return new Response('User-agent: *\nDisallow: /blocked\n', { status: 200 });
+    }) as typeof fetch;
+    try {
+      const cache = new RobotsCache({ recheckIntervalSeconds: 60 });
+      expect(await cache.isAllowed('https://example.com/blocked/x', 'danni')).toBe(false);
+      expect(await cache.isAllowed('https://example.com/ok/x', 'danni')).toBe(true);
+      expect(seen).toContain('https://example.com/robots.txt');
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
 });

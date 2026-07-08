@@ -117,6 +117,21 @@ describe('crawler.capture-resource', () => {
     expect(new ResourcesRepo(database).get('r1')?.last_outcome).toBe('skipped_unchanged');
   });
 
+  it('returns failed on an incomplete download (no sha256/bytes/tempPath)', async () => {
+    // A download that is neither notModified nor a complete capture — the fall-through failure branch.
+    const http = {
+      download: async () => ({ notModified: false, status: 200 }),
+    } as unknown as PortalHttp;
+    const blobStore = new BlobStore({ storeRoot: globalThis.__TEST_TMP_DIR__ });
+    const r = seedResource(database);
+    const out = await captureResource(
+      { db: database, http, blobStore, storeRoot: globalThis.__TEST_TMP_DIR__ },
+      r,
+    );
+    expect(out.kind).toBe('failed');
+    if (out.kind === 'failed') expect(out.reason).toBe('incomplete download');
+  });
+
   it('returns failed when the server errors', async () => {
     const fetcher = (async (url: string | URL | Request) => {
       const u = typeof url === 'string' ? url : url.toString();

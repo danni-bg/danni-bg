@@ -484,6 +484,62 @@ describe('crawler.egov-sync', () => {
     db.close();
   });
 
+  it('logs page_cap_hit when the org directory never sends a short page (FR-364 defensive bound)', async () => {
+    const storeRoot = globalThis.__TEST_TMP_DIR__;
+    const db = freshDb(storeRoot);
+    // A pathological portal: every listOrganisations page is FULL (never a short page → never
+    // "exhausted") and never contains the target org 113, so resolveOrg pages all the way to the
+    // unreachable-high MAX_ORG_PAGES bound, which must log loudly rather than truncate silently.
+    const fullPage = {
+      success: true,
+      organisations: Array.from({ length: 100 }, (_, i) => ({
+        id: 900_000 + i,
+        uri: `decoy-${i}`,
+        name: `Decoy ${i}`,
+      })),
+    };
+    const client = {
+      listDatasets: async () => ({ success: true, datasets: [] }),
+      getDatasetDetails: async () => fix('getDatasetDetails'), // org_id 113, never in a page
+      listResources: async () => ({ success: true, resources: [] }),
+      getResourceData: async () => JSON.stringify(fix('getResourceData')),
+      listOrganisations: async () => fullPage,
+    } as unknown as EgovBgClient;
+
+    const writes: string[] = [];
+    const spy = spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    try {
+      await runEgovSyncRun({
+        db,
+        config: testConfig(),
+        client,
+        storeRoot,
+        trigger: 'manual',
+        scope: { datasetIds: [DATASET_URI] },
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    const warned = writes
+      .map((w) => {
+        try {
+          return JSON.parse(w.trim()) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      })
+      .filter((r): r is Record<string, unknown> => r !== null);
+    expect(warned.some((r) => r.event === 'egov.orgs.page_cap_hit' && r.level === 'warn')).toBe(
+      true,
+    );
+    // The publisher stays unresolved (never found) → the sentinel placeholder row.
+    expect(new OrganizationsRepo(db).get('egov-org-113')?.slug).toBe('unresolved-org-113');
+    db.close();
+  });
+
   it('an unresolvable publisher becomes a marked + logged placeholder, not a silent row (FR-365, SC-3)', async () => {
     const storeRoot = globalThis.__TEST_TMP_DIR__;
     const db = freshDb(storeRoot);

@@ -12,7 +12,11 @@ import { curatedRelDir } from './curator.ts';
 import { decodeBytes, detectEncoding } from './encoding.ts';
 
 export class JsonCurator implements Curator {
-  readonly kind = 'json' as const;
+  readonly kind: 'json';
+
+  constructor() {
+    this.kind = 'json';
+  }
 
   canHandle(ctx: CurateContext): boolean {
     const fmt = (ctx.resource.declared_format ?? '').toLowerCase();

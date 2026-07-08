@@ -49,7 +49,7 @@ export function parseFlags(args: string[]): CurateFlags {
   return flags;
 }
 
-function buildTranslator(config: ReturnType<typeof loadConfig>): Translator {
+export function buildTranslator(config: ReturnType<typeof loadConfig>): Translator {
   const t = config.enrichment.translator;
   if (t.provider === 'hosted-api') {
     if (!t.endpointUrl) throw new Error('translator.endpointUrl is required for hosted-api');

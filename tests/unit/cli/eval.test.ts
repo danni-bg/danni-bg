@@ -196,4 +196,33 @@ describe('cli.eval run() (T-eval)', () => {
     );
     expect(code).toBe(2);
   });
+
+  it('exits 2 (with a formatted validation message) when the query set fails the schema', async () => {
+    const cfg = configFile(join(globalThis.__TEST_TMP_DIR__, 'unused-store-2'));
+    const qs = writeQuerySet('bad.json', [{ query: '', lang: 'bg', expected: [] }]);
+    const errs: string[] = [];
+    const origErr = process.stderr.write;
+    process.stderr.write = ((c: string | Uint8Array) => {
+      errs.push(typeof c === 'string' ? c : Buffer.from(c).toString());
+      return true;
+    }) as typeof process.stderr.write;
+    let code: number;
+    try {
+      code = await withConfig(cfg, () => run(['--query-set', qs]));
+    } finally {
+      process.stderr.write = origErr;
+    }
+    expect(code).toBe(2);
+    expect(errs.join('')).toContain('query set failed validation');
+  });
+
+  it('returns 2 on a bad flag (parseFlags failure in run)', async () => {
+    const origErr = process.stderr.write;
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+    try {
+      expect(await run(['--nope'])).toBe(2);
+    } finally {
+      process.stderr.write = origErr;
+    }
+  });
 });

@@ -5,10 +5,20 @@ import { withContext } from '../logging/logger.ts';
 import { LockContentionError } from '../manifest/sync-run.ts';
 import { createNotifier } from '../notify/notifier.ts';
 import { nextFire, parseCron } from '../schedule/cron.ts';
-import { Scheduler } from '../schedule/scheduler.ts';
+import { Scheduler, type SchedulerOptions } from '../schedule/scheduler.ts';
 import { openDb } from '../store/db.ts';
 
-export async function run(args: string[]): Promise<number> {
+/** Injectable seams (tests): the heavy sync runner + the scheduler factory (which otherwise loops forever). */
+export interface ScheduleRunDeps {
+  runPortalSync?: typeof runPortalSync;
+  makeScheduler?: (opts: SchedulerOptions) => Pick<Scheduler, 'start'>;
+  /** Abort the daemon loop (tests pass a pre-aborted signal so `start()` returns at once). */
+  signal?: AbortSignal;
+}
+
+export async function run(args: string[], deps: ScheduleRunDeps = {}): Promise<number> {
+  const runPortalSyncFn = deps.runPortalSync ?? runPortalSync;
+  const makeScheduler = deps.makeScheduler ?? ((opts: SchedulerOptions) => new Scheduler(opts));
   const sub = args[0];
   if (!sub) {
     process.stderr.write('danni schedule {install|disable|show}\n');
@@ -55,7 +65,7 @@ export async function run(args: string[]): Promise<number> {
     const notifier = createNotifier({ config: config.schedule.notifier });
 
     let exitCode = 0;
-    const scheduler = new Scheduler({
+    const scheduler = makeScheduler({
       cron: config.schedule.cron,
       onOverlap: config.schedule.onOverlap,
       onLockSkip: () => {
@@ -63,7 +73,7 @@ export async function run(args: string[]): Promise<number> {
       },
       fire: async () => {
         try {
-          await runPortalSync({
+          await runPortalSyncFn({
             db,
             config,
             http,
@@ -83,7 +93,7 @@ export async function run(args: string[]): Promise<number> {
     });
     log.info('schedule.installed', { cron: config.schedule.cron });
     void args; // reserved for future flags
-    await scheduler.start();
+    await scheduler.start(deps.signal);
     return exitCode;
   } finally {
     db.close();

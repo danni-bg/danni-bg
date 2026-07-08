@@ -176,6 +176,45 @@ describe('crawler.crawl-checkpoint planner', () => {
     db.close();
   });
 
+  it('buildOrLoadCampaign rethrows a non-corruption error during validation', async () => {
+    const db = freshDb();
+    const repo = new CrawlCheckpointsRepo(db);
+    const { scopeHash } = computeScopeHash({});
+    repo.createCampaign({ scopeHash, scopeJson: { all: true }, frozenIds: ['a'] });
+
+    // Let the first getCampaign (existence probe) succeed, then make the SECOND read — the one inside
+    // frozenIds() during validation — throw a GENERIC (non-CheckpointCorruptError) DB error. That must
+    // propagate, not be swallowed as a corrupt-checkpoint re-scan.
+    const origQuery = db.query.bind(db);
+    let getCampaignReads = 0;
+    (db as unknown as { query: (sql: string) => unknown }).query = ((sql: string) => {
+      const stmt = origQuery(sql);
+      if (sql === 'SELECT * FROM crawl_checkpoints WHERE scope_hash = ?') {
+        return new Proxy(stmt, {
+          get(target, prop, receiver) {
+            if (prop === 'get') {
+              return (...args: unknown[]) => {
+                getCampaignReads++;
+                if (getCampaignReads >= 2) throw new Error('simulated disk read failure');
+                return (target as { get: (...a: unknown[]) => unknown }).get(...args);
+              };
+            }
+            const value = Reflect.get(target, prop, receiver);
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        });
+      }
+      return stmt;
+    }) as typeof db.query;
+
+    await expect(
+      buildOrLoadCampaign({ db, client: pagingClient(['a', 'b']), scope: {} }),
+    ).rejects.toThrow('simulated disk read failure');
+
+    (db as unknown as { query: unknown }).query = origQuery;
+    db.close();
+  });
+
   it('planSession yields units strictly after the cursor, in frozen order', async () => {
     const db = freshDb();
     const repo = new CrawlCheckpointsRepo(db);

@@ -1,8 +1,8 @@
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'bun:test';
-import { openDb, withTransaction } from '../../../src/store/db.ts';
+import { loadVecExtension, openDb, withTransaction } from '../../../src/store/db.ts';
 
 const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
@@ -69,6 +69,21 @@ describe('store.openDb', () => {
     expect(() => openDb({ storeRoot: globalThis.__TEST_TMP_DIR__, loadVec: true })).toThrow(
       /sqlite-vec/,
     );
+  });
+
+  it('reaches the loadExtension call when the extension path exists (binary-independent)', () => {
+    // The vendored vec0 binary is operator-supplied and absent in CI, so the success path of
+    // loadVecExtension (the actual `db.loadExtension` call) is otherwise unreachable. Plant a file at
+    // an injected path so `existsSync` passes and the load call runs; bun's loadExtension then rejects
+    // the non-extension bytes — the point is that the call line executes, not that it succeeds.
+    const p = join(globalThis.__TEST_TMP_DIR__, 'vec0.so');
+    writeFileSync(p, '');
+    const db = openDb({ storeRoot: globalThis.__TEST_TMP_DIR__, loadVec: false });
+    try {
+      expect(() => loadVecExtension(db, p)).toThrow();
+    } finally {
+      db.close();
+    }
   });
 
   it('throws on unsupported platform/arch when loadVec is explicitly requested', () => {

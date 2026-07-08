@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { ZodError, z } from 'zod';
+import { z } from 'zod';
 import { loadConfig } from '../config/loader.ts';
 import { buildEmbedder } from '../index/embedders/factory.ts';
 import { type RecallQuery, evaluateRecall } from '../index/eval.ts';
@@ -73,16 +73,13 @@ function loadQueries(path: string): RecallQuery[] {
       `could not read query set ${path}: ${err instanceof Error ? err.message : err}`,
     );
   }
-  try {
-    return QuerySetSchema.parse(raw).queries;
-  } catch (err) {
-    if (err instanceof ZodError) {
-      throw new Error(
-        `query set failed validation: ${err.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
-      );
-    }
-    throw err;
+  const result = QuerySetSchema.safeParse(raw);
+  if (!result.success) {
+    throw new Error(
+      `query set failed validation: ${result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
+    );
   }
+  return result.data.queries;
 }
 
 function pct(n: number): string {

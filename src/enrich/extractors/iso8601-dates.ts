@@ -4,7 +4,11 @@ const ISO_RE =
   /\b(\d{4}-\d{2}-\d{2})(?:T\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?\b/g;
 
 export class Iso8601DatesExtractor implements Extractor {
-  readonly id = 'iso8601_dates';
+  readonly id: string;
+
+  constructor() {
+    this.id = 'iso8601_dates';
+  }
 
   async extract(ctx: ExtractContext): Promise<EntityCandidate[]> {
     const haystack = `${ctx.dataset.title_bg}\n${ctx.dataset.description_bg ?? ''}`;

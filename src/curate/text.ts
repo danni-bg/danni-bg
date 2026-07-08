@@ -12,7 +12,11 @@ import { curatedRelDir } from './curator.ts';
 import { decodeBytes, detectEncoding } from './encoding.ts';
 
 export class TextCurator implements Curator {
-  readonly kind = 'text' as const;
+  readonly kind: 'text';
+
+  constructor() {
+    this.kind = 'text';
+  }
 
   canHandle(_: CurateContext): boolean {
     return true;

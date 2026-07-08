@@ -11,7 +11,13 @@ import { DatasetsRepo } from '../store/repos/datasets.ts';
  * timestamps (metadata_created/metadata_modified) without re-downloading resources. The cheap way
  * to fix freshness across the whole mirror; a full content refresh is `danni sync`.
  */
-export async function run(args: string[]): Promise<number> {
+/** Injectable seam (tests): the networked metadata backfill. Defaults to the real implementation. */
+export interface RefreshMetadataRunDeps {
+  refreshMetadata?: typeof refreshMetadata;
+}
+
+export async function run(args: string[], deps: RefreshMetadataRunDeps = {}): Promise<number> {
+  const refreshMetadataFn = deps.refreshMetadata ?? refreshMetadata;
   if (args.includes('--help') || args.includes('-h')) {
     process.stdout.write('danni refresh-metadata\n');
     return 0;
@@ -27,7 +33,7 @@ export async function run(args: string[]): Promise<number> {
     const http = buildPortalHttp(config);
     const apiKey = config.portal.apiKeyEnv ? process.env[config.portal.apiKeyEnv] : undefined;
     const client = new EgovBgClient({ baseUrl: config.portal.baseUrl, http, apiKey });
-    const result = await refreshMetadata({ repo: new DatasetsRepo(db), client });
+    const result = await refreshMetadataFn({ repo: new DatasetsRepo(db), client });
     process.stdout.write(`${JSON.stringify(result)}\n`);
     // Fail only if nothing refreshed at all (total failure); partial failures are reported in the JSON.
     return result.total > 0 && result.refreshed === 0 ? 4 : 0;

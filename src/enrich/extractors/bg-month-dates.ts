@@ -5,7 +5,11 @@ const RE =
   /(\d{1,2})\s+(януари|февруари|март|април|май|юни|юли|август|септември|октомври|ноември|декември)\s+(\d{4})/gi;
 
 export class BgMonthDatesExtractor implements Extractor {
-  readonly id = 'bg_month_dates';
+  readonly id: string;
+
+  constructor() {
+    this.id = 'bg_month_dates';
+  }
 
   async extract(ctx: ExtractContext): Promise<EntityCandidate[]> {
     const haystack = `${ctx.dataset.title_bg}\n${ctx.dataset.description_bg ?? ''}`;
