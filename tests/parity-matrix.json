@@ -48,6 +48,26 @@
     {
       "name": "tabular",
       "testId": "tests/contract/curated-tabular-artifact.test.ts#CSV curator output validates against curated-tabular-artifact.schema.json shape"
+    },
+    {
+      "name": "json",
+      "testId": "tests/contract/curated-artifact-families.test.ts#JSON curator round-trips json-array.json: schema validates the json contract and data.json preserves the Cyrillic fixture value"
+    },
+    {
+      "name": "datastore-json",
+      "testId": "tests/contract/curated-artifact-families.test.ts#Datastore envelope (egov getResourceData.json) curates to a contract-valid tabular artifact: header flattened, NDJSON rows, Cyrillic preserved"
+    },
+    {
+      "name": "geojson",
+      "testId": "tests/contract/curated-artifact-families.test.ts#GeoJSON curator round-trips geojson-sample.geojson: schema validates the geojson contract (feature_collection) with Cyrillic properties intact"
+    },
+    {
+      "name": "xml",
+      "testId": "tests/contract/curated-artifact-families.test.ts#XML curator round-trips xml-sample.xml: schema validates the xml contract with the root element identified and Cyrillic attributes intact"
+    },
+    {
+      "name": "text",
+      "testId": "tests/contract/curated-artifact-families.test.ts#Text curator round-trips text-cp1251.txt: CP1251 bytes decode to UTF-8 Cyrillic and the transform rule is declared"
     }
   ],
   "explorerEndpoints": [
@@ -120,6 +140,24 @@
     {
       "name": "readResource",
       "testId": "apps/explorer-api/tests/chat-route.test.ts#readResource reads rows in scope, blocks out of scope"
+    }
+  ],
+  "mcpTools": [
+    {
+      "name": "mirror_search",
+      "testId": "tests/unit/mcp/server.test.ts#tools/call mirror_search finds the dataset by keyword"
+    },
+    {
+      "name": "mirror_info",
+      "testId": "tests/unit/mcp/server.test.ts#tools/call mirror_info returns the dataset record"
+    },
+    {
+      "name": "mirror_entity_search",
+      "testId": "tests/unit/mcp/server.test.ts#tools/call mirror_entity_search returns datasets linked to the entity, with its label"
+    },
+    {
+      "name": "read_resource",
+      "testId": "tests/unit/mcp/server.test.ts#tools/call read_resource returns paginated rows"
     }
   ],
   "explorerBenchmarks": [
