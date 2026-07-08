@@ -60,7 +60,16 @@ export function seedSettings(settings: PlatformSettingsRepo): void {
   }
 }
 
-export function main(): void {
+/** The subset of `Bun.serve`'s options this bootstrap sets. Injectable so `main` is testable without
+ * binding a real socket (the default is `Bun.serve`; behavior is unchanged in production). */
+export interface ServeOptions {
+  port: number;
+  fetch: (req: Request) => Response | Promise<Response>;
+  idleTimeout: number;
+}
+export type ServeFn = (options: ServeOptions) => unknown;
+
+export function main(serve: ServeFn = Bun.serve): void {
   const config = loadConfig();
   // DANNI_STORE_ROOT lets a container/deploy point at its mounted store volume without baking a
   // host-specific path into danni.config.json (spec 030).
@@ -111,7 +120,7 @@ export function main(): void {
   log.info('explorer_api_listening', { port });
   // Bun's default idleTimeout is 10s — too short for streaming chat where a large model can take
   // longer than that to emit its first token. Use the max (255s) so SSE connections aren't dropped.
-  Bun.serve({ port, fetch: app.fetch, idleTimeout: 255 });
+  serve({ port, fetch: app.fetch, idleTimeout: 255 });
 }
 
 if (import.meta.main) main();

@@ -48,10 +48,20 @@ describe('curate.run-curate', () => {
   });
 
   it('skips resources without a raw_path or missing file', async () => {
-    new ResourcesRepo(s.db).upsert({
+    const r = new ResourcesRepo(s.db);
+    r.upsert({
       id: 'r-no-raw',
       datasetId: 'd1',
       sourceUrl: 'https://x/r-no-raw',
+    });
+    // captured (has a raw_path + success outcome) but the raw file is absent on disk
+    r.upsert({ id: 'r-gone', datasetId: 'd1', sourceUrl: 'https://x/r-gone.json' });
+    r.recordCapture({
+      id: 'r-gone',
+      bytes: 1,
+      sha256: 'b'.repeat(64),
+      rawPath: 'd1/r-gone/raw.json',
+      outcome: 'success',
     });
     const out = await runCurate({
       db: s.db,

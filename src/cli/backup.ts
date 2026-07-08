@@ -25,10 +25,13 @@ export interface BackupResult {
  *
  * Restore is a file swap (mirror + all SaaS state live in this one file) — see docs/backup-restore.md.
  *
- * `loadVec` (default true, production) registers the sqlite-vec module — required for `VACUUM` to
- * rebuild the mirror's vec0 virtual tables. Tests over a vec-free fixture pass false.
+ * `loadVec` (default `false`) registers the sqlite-vec module. Since spec 050 (FR-322) similarity runs
+ * over the cached embedding matrix and the schema provisions NO `vec0` virtual table, so `VACUUM` needs
+ * no module and a backup works on a clean checkout without the (operator-supplied) binary. The flag
+ * stays as the opt-in seam: an operator who has provisioned `vec0` tables passes `true` so `VACUUM`
+ * can rebuild them (matches `openDb`'s `loadVec` default and every other store caller).
  */
-export function backup(storeRoot: string, dest: string, loadVec = true): BackupResult {
+export function backup(storeRoot: string, dest: string, loadVec = false): BackupResult {
   const src = join(storeRoot, 'danni.sqlite');
   if (!existsSync(src)) {
     throw new Error(`no danni.sqlite at ${storeRoot}. Run 'bun run db:migrate' first.`);

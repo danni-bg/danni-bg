@@ -124,7 +124,11 @@ export function flattenHeader(rows: unknown[]): { header: string[]; dataStart: n
 export class DatastoreJsonCurator implements Curator {
   // The verbatim raw is always a JSON envelope, so it sniffs as `json`; being the first json-kind
   // curator, the registry probes this one first and its hint gate decides (FR-312).
-  readonly kind = 'json' as const;
+  readonly kind: 'json';
+
+  constructor() {
+    this.kind = 'json';
+  }
 
   canHandle(ctx: CurateContext): boolean {
     return (

@@ -52,7 +52,11 @@ const KEYWORDS: Array<{
 ];
 
 export class ColumnNameHeuristicsExtractor implements Extractor {
-  readonly id = 'column_name_heuristics';
+  readonly id: string;
+
+  constructor() {
+    this.id = 'column_name_heuristics';
+  }
 
   async extract(ctx: ExtractContext): Promise<EntityCandidate[]> {
     const haystack = [ctx.dataset.title_bg, ctx.dataset.description_bg ?? '']

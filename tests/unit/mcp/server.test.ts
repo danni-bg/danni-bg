@@ -335,5 +335,11 @@ describe('mcp.server handleRpc', () => {
     expect(initAsNotif).toBeNull();
     const ping = await handleRpc({ jsonrpc: '2.0', id: 10, method: 'ping' }, ctx);
     expect(ping?.result).toEqual({});
+    // A request carrying an id but a missing/non-string method → -32600 invalid request.
+    const noMethod = await handleRpc(
+      { jsonrpc: '2.0', id: 11 } as unknown as Parameters<typeof handleRpc>[0],
+      ctx,
+    );
+    expect(noMethod?.error?.code).toBe(-32600);
   });
 });

@@ -12,7 +12,11 @@ import { curatedRelDir } from './curator.ts';
 import { decodeBytes, detectEncoding } from './encoding.ts';
 
 export class GeoJsonCurator implements Curator {
-  readonly kind = 'geojson' as const;
+  readonly kind: 'geojson';
+
+  constructor() {
+    this.kind = 'geojson';
+  }
 
   canHandle(ctx: CurateContext): boolean {
     const fmt = (ctx.resource.declared_format ?? '').toLowerCase();

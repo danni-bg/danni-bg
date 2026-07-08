@@ -91,6 +91,19 @@ describe('read.resource-rows readResourceRows', () => {
     expect(out.truncated).toBe(true);
   });
 
+  it('applies sort/filter to a JSON array via the grid path', () => {
+    seedCurated(db, storeRoot, 'json', 'data.json', JSON.stringify([{ x: 3 }, { x: 1 }, { x: 2 }]));
+    const out = readResourceRows(db, storeRoot, 'd1', 'r1', {
+      limit: 2,
+      offset: 0,
+      grid: { sort: { col: 'x', dir: 'asc' }, filters: {} },
+    });
+    expect(out.rows).toEqual([{ x: 1 }, { x: 2 }]);
+    expect(out.total).toBe(3);
+    expect(out.truncated).toBe(true);
+    expect(out.gridTruncated).toBe(false);
+  });
+
   it('returns text kinds verbatim', () => {
     seedCurated(db, storeRoot, 'text', 'data.txt', 'hello\nworld\n');
     const out = readResourceRows(db, storeRoot, 'd1', 'r1');

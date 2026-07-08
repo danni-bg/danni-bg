@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { EMPTY_FILTERS, type FilterState } from '../types.ts';
-import { buildUrl, fetchDatasets, fetchFacets, fetchNational, fetchRegions } from './api.ts';
+import {
+  buildUrl,
+  fetchDataset,
+  fetchDatasets,
+  fetchFacets,
+  fetchNational,
+  fetchRegions,
+  fetchResourceRows,
+} from './api.ts';
 
 const F = (over: Partial<FilterState> = {}): FilterState => ({ ...EMPTY_FILTERS, ...over });
 const realFetch = globalThis.fetch;
@@ -63,8 +71,53 @@ describe('fetch wrappers', () => {
     expect(cap.url).toContain('tags=t');
   });
 
+  it('fetchDataset encodes the id into the path', async () => {
+    const cap: { url?: string } = {};
+    stubFetch(cap, { datasetId: 'a/b', title: {} });
+    const out = await fetchDataset('a/b');
+    expect(cap.url).toBe('/api/datasets/a%2Fb');
+    expect(out.datasetId).toBe('a/b');
+  });
+
   it('throws on a non-ok response', async () => {
     stubFetch({}, {}, false);
     await expect(fetchDatasets(F())).rejects.toThrow('request failed');
+  });
+});
+
+describe('fetchResourceRows', () => {
+  it('sends bare pagination when no grid query is given', async () => {
+    const cap: { url?: string } = {};
+    stubFetch(cap, { kind: 'grid', rows: [] });
+    await fetchResourceRows('d1', 'r1');
+    expect(cap.url).toContain('/api/datasets/d1/resources/r1/rows?');
+    expect(cap.url).toContain('limit=50');
+    expect(cap.url).toContain('offset=0');
+    expect(cap.url).not.toContain('sort=');
+    expect(cap.url).not.toContain('filters=');
+  });
+
+  it('encodes ids and forwards sort + only the non-blank filters', async () => {
+    const cap: { url?: string } = {};
+    stubFetch(cap, { kind: 'grid', rows: [] });
+    await fetchResourceRows('d/1', 'r 1', 20, 40, {
+      sort: { col: 'year', dir: 'desc' },
+      filters: { region: ' Русе ', empty: '   ' }, // the all-whitespace filter is dropped
+    });
+    expect(cap.url).toContain('/api/datasets/d%2F1/resources/r%201/rows?');
+    expect(cap.url).toContain('limit=20');
+    expect(cap.url).toContain('offset=40');
+    expect(cap.url).toContain('sort=year');
+    expect(cap.url).toContain('dir=desc');
+    const filters = new URL(`http://x${cap.url}`).searchParams.get('filters');
+    expect(JSON.parse(filters ?? '{}')).toEqual({ region: ' Русе ' });
+  });
+
+  it('omits the filters param entirely when every value is blank', async () => {
+    const cap: { url?: string } = {};
+    stubFetch(cap, { kind: 'grid', rows: [] });
+    await fetchResourceRows('d1', 'r1', 50, 0, { sort: null, filters: { a: '', b: '  ' } });
+    expect(cap.url).not.toContain('filters=');
+    expect(cap.url).not.toContain('sort=');
   });
 });

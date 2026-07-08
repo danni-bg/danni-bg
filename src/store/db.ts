@@ -40,9 +40,10 @@ export interface OpenDbOptions {
 }
 
 /** Load the sqlite-vec extension onto an already-open connection (also needed by `VACUUM`/reads of
- *  vec0 virtual tables on secondary connections). Throws if the vendored binary is missing. */
-export function loadVecExtension(db: Database): void {
-  const extPath = vecExtensionPath();
+ *  vec0 virtual tables on secondary connections). Throws if the vendored binary is missing. `extPath`
+ *  defaults to the platform-resolved vendored path; it is a parameter only so the load call is
+ *  exercisable without the (operator-supplied, CI-absent) binary. */
+export function loadVecExtension(db: Database, extPath: string = vecExtensionPath()): void {
   if (!existsSync(extPath)) {
     throw new Error(
       `sqlite-vec extension not found at ${extPath}. See vendor/sqlite-vec/README.md for operator setup.`,

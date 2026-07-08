@@ -1,6 +1,12 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { setupDom, teardownDom } from '../test-dom.ts';
+
+beforeAll(setupDom);
+afterAll(teardownDom);
+
+import { act, cleanup, renderHook } from '@testing-library/react';
 import { EMPTY_FILTERS } from '../types.ts';
-import { explorerStore } from './explorerStore.ts';
+import { explorerStore, useExplorer } from './explorerStore.ts';
 
 describe('explorerStore', () => {
   beforeEach(() => {
@@ -36,6 +42,14 @@ describe('explorerStore', () => {
     s.closeDataset();
     expect(explorerStore.getState().reader?.resourceId).toBe('r1');
     expect(explorerStore.getState().chatFocus?.datasetId).toBe('d1');
+  });
+
+  it('opens and closes the document reader', () => {
+    const s = explorerStore.getState();
+    s.openReader({ datasetId: 'd1', resourceId: 'r1', name: 'r', titleBg: 'T' });
+    expect(explorerStore.getState().reader?.resourceId).toBe('r1');
+    s.closeReader();
+    expect(explorerStore.getState().reader).toBeNull();
   });
 
   it('sets and clears the chat focus', () => {
@@ -77,5 +91,16 @@ describe('explorerStore', () => {
   it('setFilters replaces the whole filter object', () => {
     explorerStore.getState().setFilters({ ...EMPTY_FILTERS, freshness: 'stale' });
     expect(explorerStore.getState().filters.freshness).toBe('stale');
+  });
+});
+
+describe('useExplorer — React binding', () => {
+  afterEach(cleanup);
+
+  it('subscribes a component to a store selector and re-renders on change', () => {
+    const { result } = renderHook(() => useExplorer((s) => s.filters.tags));
+    expect(result.current).toEqual([]);
+    act(() => explorerStore.getState().updateFilters((f) => ({ ...f, tags: ['въздух'] })));
+    expect(result.current).toEqual(['въздух']);
   });
 });

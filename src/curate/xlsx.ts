@@ -345,7 +345,11 @@ function buildSheet(sheet: ParsedSheet, slug: string): BuiltSheet | null {
 }
 
 export class XlsxCurator implements Curator {
-  readonly kind = 'tabular' as const;
+  readonly kind: 'tabular';
+
+  constructor() {
+    this.kind = 'tabular';
+  }
 
   canHandle(ctx: CurateContext): boolean {
     const fmt = (ctx.resource.declared_format ?? '').toLowerCase();

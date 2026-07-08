@@ -20,7 +20,11 @@ function findRootElement(text: string): string {
 }
 
 export class XmlCurator implements Curator {
-  readonly kind = 'xml' as const;
+  readonly kind: 'xml';
+
+  constructor() {
+    this.kind = 'xml';
+  }
 
   canHandle(ctx: CurateContext): boolean {
     const fmt = (ctx.resource.declared_format ?? '').toLowerCase();

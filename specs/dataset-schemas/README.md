@@ -7,11 +7,33 @@ datasets and the curator infers their canonical schema.
 ## Status
 
 **Bootstrapped on 2026-05-08** as part of feature `001-egov-data-sync` (Phase
-1 design). At this point only this README exists. Each entry will be added
-once the corresponding curated artifact has been produced and a fixture-based
-round-trip test exists for it (Constitution VIII: Dataset Schema Parity).
+1 design). Each entry is added once the corresponding curated artifact has
+been produced and a fixture-based round-trip test exists for it
+(Constitution VIII: Dataset Schema Parity). As of 2026-07-08 every curator
+family in `src/curate/registry.ts` is cataloged.
+
+## Index
+
+One `<family>.md` per curator family (`src/curate/registry.ts`), each citing
+its fixture-based round-trip test and its `tests/parity-matrix.json#datasetSchemas`
+entry:
+
+| entry | source formats | curated artifact |
+|---|---|---|
+| [tabular.md](tabular.md) | CSV, TSV, XLSX | `data.ndjson` + tabular `schema.json` |
+| [datastore-json.md](datastore-json.md) | egov `getResourceData` envelope (spec 049, `EGOV_DATASTORE_FORMAT` hint) | dispatches to tabular / json / text |
+| [json.md](json.md) | JSON, JSONL, NDJSON | `data.json` + json-shape `schema.json` |
+| [geojson.md](geojson.md) | GeoJSON | `data.json` + geojson-shape `schema.json` |
+| [xml.md](xml.md) | XML | `data.xml` + xml `schema.json` |
+| [text.md](text.md) | plain text + sniff fallback | `data.txt` + text `schema.json` |
 
 ## Catalog entry layout
+
+Family-level entries are single `<family>.md` files (the table above); each
+MUST have a matching `datasetSchemas` row in `tests/parity-matrix.json`
+(enforced by `tests/parity-matrix-check.ts`). Dataset-specific entries, when
+a single dataset warrants its own schema documentation, use the directory
+layout below:
 
 ```
 specs/dataset-schemas/<dataset-slug>/

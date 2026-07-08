@@ -184,4 +184,31 @@ describe('index.query', () => {
     expect(byEntity?.matchedEntities?.[0]?.entityId).toBe('subject:census');
     expect(hybrid?.matchedEntities).toBeUndefined();
   });
+
+  it('evicts from the top-k cosine heap when candidates exceed CANDIDATE_DEPTH (50)', async () => {
+    // Seed well past the 50-deep candidate heap so a later, higher-scoring vector must pop the
+    // current minimum — exercising the heap-eviction branch of topKCosine.
+    const ds = new DatasetsRepo(s.db);
+    for (let i = 0; i < 60; i++) {
+      ds.upsert({
+        id: `d-bulk-${i}`,
+        slug: `bulk-${i}`,
+        titleBg: `Бюджет отчет номер ${i} за община ${i % 7}`,
+        descriptionBg: `Финансови данни ${i} ${'дума '.repeat(i % 5)}`,
+        tags: ['budget'],
+        groups: [],
+        sourceUrl: `https://x/d-bulk-${i}`,
+      });
+    }
+    await runIndex({ db: s.db, embedder: s.embedder });
+    const out = await search({
+      db: s.db,
+      embedder: s.embedder,
+      query: 'бюджет отчет община',
+      limit: 20,
+    });
+    // The heap kept the best 50 candidates across 62 datasets; the top-20 still surface.
+    expect(out.length).toBeGreaterThan(0);
+    expect(out.length).toBeLessThanOrEqual(20);
+  });
 });

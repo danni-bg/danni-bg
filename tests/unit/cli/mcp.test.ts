@@ -1,7 +1,9 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { dispatchLine, runStdio } from '../../../src/cli/mcp.ts';
+import { dispatchLine, run, runStdio } from '../../../src/cli/mcp.ts';
 import { LocalOnnxEmbedder } from '../../../src/index/embedders/local-onnx.ts';
 import type { McpContext } from '../../../src/mcp/server.ts';
 import { runMigrations } from '../../../src/store/migrate.ts';
@@ -72,5 +74,114 @@ describe('cli.mcp runStdio', () => {
     );
     expect(out.length).toBe(1);
     expect(JSON.parse(out[0] ?? '{}').id).toBe(7);
+  });
+
+  it('runStdio writes to stdout by default when no write sink is given', async () => {
+    const orig = process.stdout.write;
+    const seen: string[] = [];
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      seen.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString());
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      await runStdio(ctx, chunks(`${JSON.stringify({ jsonrpc: '2.0', id: 9, method: 'ping' })}\n`));
+    } finally {
+      process.stdout.write = orig;
+    }
+    expect(JSON.parse(seen.join('') || '{}').id).toBe(9);
+  });
+});
+
+describe('cli.mcp run()', () => {
+  function configFile(storeRoot: string): string {
+    const cfgPath = join(
+      globalThis.__TEST_TMP_DIR__,
+      `mcp-${Math.random().toString(36).slice(2)}.json`,
+    );
+    writeFileSync(
+      cfgPath,
+      JSON.stringify({
+        portal: { baseUrl: 'https://data.egov.bg/api/3/action/' },
+        crawler: {
+          userAgent: 'danni-bg/test',
+          rateLimit: { requestsPerSecondPerHost: 1 },
+          concurrency: { maxConcurrentRequestsPerHost: 4 },
+          backoff: { initialMs: 500, maxMs: 60000, failureBudget: 20 },
+          robots: { recheckIntervalSeconds: 86400 },
+        },
+        store: { root: storeRoot },
+        schedule: {
+          enabled: false,
+          cron: null,
+          onOverlap: 'skip',
+          failureRateThreshold: 0.05,
+          notifier: { kind: 'stderr' },
+        },
+        scope: {},
+        enrichment: {
+          translator: { provider: 'local-marianmt' },
+          embedder: { provider: 'local-onnx', batchSize: 32 },
+        },
+        index: { incremental: true },
+      }),
+    );
+    return cfgPath;
+  }
+
+  async function withEnv<T>(cfg: string, fn: () => Promise<T>): Promise<T> {
+    const prev = process.env.DANNI_CONFIG;
+    process.env.DANNI_CONFIG = cfg;
+    try {
+      return await fn();
+    } finally {
+      if (prev === undefined) delete process.env.DANNI_CONFIG;
+      else process.env.DANNI_CONFIG = prev;
+    }
+  }
+
+  it('prints help and returns 0', async () => {
+    const orig = process.stdout.write;
+    const seen: string[] = [];
+    process.stdout.write = ((c: string | Uint8Array) => {
+      seen.push(typeof c === 'string' ? c : Buffer.from(c).toString());
+      return true;
+    }) as typeof process.stdout.write;
+    let code: number;
+    try {
+      code = await run(['--help']);
+    } finally {
+      process.stdout.write = orig;
+    }
+    expect(code).toBe(0);
+    expect(seen.join('')).toContain('Model Context Protocol');
+  });
+
+  it('opens the store, runs the stdio loop over a finite input, and returns 0', async () => {
+    const storeRoot = join(
+      globalThis.__TEST_TMP_DIR__,
+      `store-${Math.random().toString(36).slice(2)}`,
+    );
+    const { openDb } = await import('../../../src/store/db.ts');
+    const seed = openDb({ storeRoot, loadVec: false });
+    runMigrations(seed, MIGRATIONS);
+    seed.close();
+    const cfg = configFile(storeRoot);
+
+    const orig = process.stdout.write;
+    const seen: string[] = [];
+    process.stdout.write = ((c: string | Uint8Array) => {
+      seen.push(typeof c === 'string' ? c : Buffer.from(c).toString());
+      return true;
+    }) as typeof process.stdout.write;
+    let code: number;
+    try {
+      code = await withEnv(cfg, () =>
+        run([], chunks(`${JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'ping' })}\n`)),
+      );
+    } finally {
+      process.stdout.write = orig;
+    }
+    expect(code).toBe(0);
+    expect(JSON.parse(seen.join('') || '{}').id).toBe(3);
   });
 });

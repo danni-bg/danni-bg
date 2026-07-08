@@ -49,7 +49,7 @@ export async function runStdio(
   await flush(buf);
 }
 
-export async function run(args: string[]): Promise<number> {
+export async function run(args: string[], input?: AsyncIterable<Uint8Array>): Promise<number> {
   if (args[0] === '--help' || args[0] === '-h') {
     process.stdout.write(
       'danni mcp\n' +
@@ -69,7 +69,7 @@ export async function run(args: string[]): Promise<number> {
       embedder: buildEmbedder(config.enrichment.embedder),
       freshnessSloSeconds: config.store.freshnessSloSeconds,
     };
-    await runStdio(ctx);
+    await runStdio(ctx, input);
     return 0;
   } finally {
     db.close();

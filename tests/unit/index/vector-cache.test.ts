@@ -5,7 +5,11 @@ import { fileURLToPath } from 'node:url';
 import { LocalOnnxEmbedder } from '../../../src/index/embedders/local-onnx.ts';
 import { search } from '../../../src/index/query.ts';
 import { runIndex } from '../../../src/index/run-index.ts';
-import { corpusLoadCount, getVectorMatrix } from '../../../src/index/vector-cache.ts';
+import {
+  corpusLoadCount,
+  getVectorMatrix,
+  invalidateVectorCache,
+} from '../../../src/index/vector-cache.ts';
 import { runMigrations } from '../../../src/store/migrate.ts';
 import { DatasetsRepo } from '../../../src/store/repos/datasets.ts';
 
@@ -77,6 +81,24 @@ describe('index.vector-cache', () => {
 
     const hits = await search({ db: s.db, embedder: s.embedder, query: 'бюджет' });
     expect(hits.map((h) => h.datasetId)).toContain('d3');
+  });
+
+  it('invalidateVectorCache forces the next getVectorMatrix to reload (same version)', () => {
+    const first = getVectorMatrix(s.db);
+    const before = corpusLoadCount();
+    // Same embeddings_meta.updated_at, but an explicit drop must reload from scratch.
+    invalidateVectorCache(s.db);
+    const reloaded = getVectorMatrix(s.db);
+    expect(reloaded).not.toBe(first);
+    expect(corpusLoadCount() - before).toBe(1);
+    expect([...reloaded.ids].sort()).toEqual([...first.ids].sort());
+  });
+
+  it('invalidateVectorCache on a never-cached db is a no-op', () => {
+    const fresh = new Database(':memory:');
+    // No entry has ever been stored for this handle — deleting is harmless.
+    expect(() => invalidateVectorCache(fresh)).not.toThrow();
+    fresh.close();
   });
 
   it('invalidates on two back-to-back index runs even within the same millisecond (FR-321)', async () => {

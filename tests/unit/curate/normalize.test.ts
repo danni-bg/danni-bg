@@ -47,6 +47,16 @@ describe('curate.normalize', () => {
     expect(normalizeDecimal('')).toBeNull();
   });
 
+  it('returns null when a BG-locale number overflows to non-finite', () => {
+    // matches the BG-locale regex but parseFloat overflows to Infinity
+    expect(normalizeDecimal(`1${' 000'.repeat(120)}`)).toBeNull();
+  });
+
+  it('returns null when a US-locale number overflows to non-finite', () => {
+    // matches the plain-integer regex but parseFloat overflows to Infinity
+    expect(normalizeDecimal('9'.repeat(400))).toBeNull();
+  });
+
   it('normalizes booleans (BG and EN)', () => {
     expect(normalizeBoolean('Да')).toBe(true);
     expect(normalizeBoolean('TRUE')).toBe(true);

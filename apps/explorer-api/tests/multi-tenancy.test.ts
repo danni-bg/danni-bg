@@ -92,6 +92,14 @@ describe('Multi-tenancy (spec 029)', () => {
     expect(body.members).toBeUndefined(); // members are listed only to org admins
   });
 
+  it('GET /api/tenant/memberships lists every org the caller belongs to', async () => {
+    s.tenants.addMember(globex.id, ownerA.id, 'member'); // ownerA now belongs to two orgs
+    const res = await s.app.request('/api/tenant/memberships', { headers: h(ownerA) });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { memberships: { tenantId: string }[] };
+    expect(body.memberships.map((m) => m.tenantId).sort()).toEqual([acme.id, globex.id].sort());
+  });
+
   it('the active org resolves to the pre-set membership; owners see their members', async () => {
     const res = await s.app.request('/api/tenant', { headers: h(ownerA) });
     const body = (await res.json()) as { slug: string; role: string; members: { email: string }[] };
@@ -155,6 +163,38 @@ describe('Multi-tenancy (spec 029)', () => {
       headers: h(ownerA),
     });
     expect(self.status).toBe(400);
+  });
+
+  it('removing a user who is not a member of the org 404s', async () => {
+    // ownerB is a real user but not a member of Acme → membershipOf is null (tenant.ts 404 branch).
+    const res = await s.app.request(`/api/tenant/members/${ownerB.id}`, {
+      method: 'DELETE',
+      headers: h(ownerA),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('an owner can create then delete one of their API keys; deleting an unknown key 404s', async () => {
+    const created = await s.app.request('/api/me/api-keys', {
+      method: 'POST',
+      headers: h(ownerA),
+      body: JSON.stringify({ name: 'to-delete' }),
+    });
+    expect(created.status).toBe(201);
+    const { id } = (await created.json()) as { id: string };
+
+    const del = await s.app.request(`/api/me/api-keys/${id}`, {
+      method: 'DELETE',
+      headers: h(ownerA),
+    });
+    expect(del.status).toBe(200);
+    expect((await del.json()) as { revoked: boolean }).toEqual({ revoked: true });
+
+    const missing = await s.app.request('/api/me/api-keys/nope', {
+      method: 'DELETE',
+      headers: h(ownerA),
+    });
+    expect(missing.status).toBe(404);
   });
 
   it('an API key created in a session belongs to the caller’s active org', async () => {
@@ -369,6 +409,17 @@ describe('Multi-tenancy (spec 029)', () => {
       });
       expect(again.status).toBe(409);
       expect(s.tenants.membershipOf(acme.id, ownerA.id)?.role).toBe('owner'); // role untouched
+    });
+
+    it('super-admin member-add with an unknown email 404s', async () => {
+      const superAdmin = mkUser('root@danni.bg', 'admin');
+      const res = await s.app.request(`/api/admin/tenants/${acme.id}/members`, {
+        method: 'POST',
+        headers: h(superAdmin),
+        body: JSON.stringify({ email: 'ghost@nowhere.test', role: 'member' }),
+      });
+      expect(res.status).toBe(404);
+      expect(((await res.json()) as { error: { code: string } }).error.code).toBe('not_found');
     });
 
     it('a non-admin cannot reach super-admin member seeding', async () => {

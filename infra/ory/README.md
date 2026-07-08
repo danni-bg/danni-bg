@@ -48,6 +48,42 @@ cd apps/explorer-web && bunx vite --port 5173 # → http://localhost:5173
 Hono on `:8790` is a complete entry point (proxies `/kratos`, self-validates sessions). The Vite
 dev server just proxies everything (`/api`, `/kratos`, `/healthz`) → `:8790` for hot-reload.
 
+## Deploying on a real domain
+
+`kratos.yaml` hardcodes `localhost` in every browser-facing value (`serve.public.base_url`, CORS
+origins, `selfservice.*.ui_url` + return URLs, `session.cookie.domain`, `passkey.rp.id`/`origins`).
+That is correct for local self-host but breaks on a hosted domain — passkeys and session cookies are
+origin/domain-scoped and will silently refuse to work off `localhost`. Rather than fork `kratos.yaml`,
+`docker-compose.prod.yml` overrides those keys via Ory's env-var mapping, all driven from three
+operator variables (set them together — see `.env.example`):
+
+| Var | What it sets | Example |
+|---|---|---|
+| `DANNI_PUBLIC_URL` | `base_url`, CORS, all flow UI + return URLs (scheme+host, **no trailing slash**) | `https://danni.example.bg` |
+| `DANNI_COOKIE_DOMAIN` | `session.cookie.domain` (host only, no scheme) | `danni.example.bg` |
+| `DANNI_PASSKEY_RP_ID` | WebAuthn `passkey.rp.id` = the **registrable domain** (no scheme/port) | `danni.example.bg` |
+
+```bash
+DANNI_PUBLIC_URL=https://danni.example.bg \
+DANNI_COOKIE_DOMAIN=danni.example.bg \
+DANNI_PASSKEY_RP_ID=danni.example.bg \
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+Unset, every override falls back to the localhost single-port default, so the localhost journey is
+unchanged. Notes:
+
+- **`rp.id` is sticky.** WebAuthn credentials are bound to the RP id at enrollment. Changing
+  `DANNI_PASSKEY_RP_ID` after users register passkeys **invalidates every existing passkey** — pick
+  the final registrable domain before onboarding, and keep it stable across host/subdomain moves
+  (a passkey enrolled on `danni.example.bg` keeps working on `app.danni.example.bg` only if `rp.id`
+  stays `danni.example.bg`).
+- **HTTPS is required off localhost.** WebAuthn and `SameSite`/secure cookies need a secure context;
+  `localhost` is exempt, a real domain is not. Terminate TLS in front of the app (the TLS/ingress
+  layer lives in the commercial `danni-bg/deploy` repo).
+- The prod overlay drops the Vite-dev `:5173` CORS/return-URL/passkey-origin entries (they only
+  exist for local HMR); a hosted deploy serves the built SPA from `DANNI_PUBLIC_URL` itself.
+
 ## Verify
 
 ```bash
@@ -75,7 +111,8 @@ credentials over an unencrypted connection, and Mailpit accepts unauthenticated 
   `:5173`) for passwordless register/login + per-user passkey management in settings. The SPA's custom
   flow UI injects Kratos's `webauthn.js` and submits the credential natively; registration stays
   single-screen via `enable_legacy_one_step`. WebAuthn needs a secure context — `localhost` counts, so
-  it works in dev without HTTPS.
+  it works in dev without HTTPS. For a hosted domain, set `DANNI_PASSKEY_RP_ID`/`DANNI_PUBLIC_URL`
+  (see "Deploying on a real domain") — the `localhost` rp id above is the dev default only.
 - **Recovery/verification use link mode** (magic links, danni-branded templates) — the link resolves
   through the single-port `/kratos` proxy and lands on `:8790/auth/settings`. Kratos + Oathkeeper are
   pinned to **v26.2.0**.

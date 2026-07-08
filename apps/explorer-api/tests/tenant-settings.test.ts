@@ -160,6 +160,31 @@ describe('Tenant-scoped settings (spec 042)', () => {
     });
   });
 
+  it('an org admin can clear the LLM override by writing llm: null', async () => {
+    // Seed a GLOBAL default so clearing the tenant override falls back to a known inherited view.
+    // (Without this the resolved llm would be null on a clean env — no ambient EXPLORER_DEFAULT_*/
+    // .env-seeded global — which is exactly what differs between a local shell and CI.)
+    await s.app.request('/api/admin/settings', {
+      method: 'PUT',
+      headers: h(superAdmin),
+      body: JSON.stringify({
+        llm: { kind: 'anthropic', model: 'global-model', apiKey: 'sk-global' },
+      }),
+    });
+    // Set an override, then clear it with an explicit null → applyTenantSettings clears the tenant row.
+    await putTenantSettings(ownerA, {
+      llm: { kind: 'openai-compatible', model: 'acme-model', apiKey: 'sk-acme' },
+    });
+    expect(s.settings.own('llm.default', acme.id)).not.toBeNull();
+
+    const cleared = await putTenantSettings(ownerA, { llm: null });
+    expect(cleared.status).toBe(200);
+    expect(s.settings.own('llm.default', acme.id)).toBeNull();
+    const body = (await cleared.json()) as { llm: { overridden: boolean; source: string } };
+    expect(body.llm.overridden).toBe(false); // falls back to the inherited global
+    expect(body.llm.source).toBe('inherited');
+  });
+
   it('SC-3 / FR-241: overriding a non-allowlisted key is 4xx and writes nothing', async () => {
     // A platform toggle / api rate knob is not in the tenant allowlist — .strict() rejects it.
     const bad = await putTenantSettings(ownerA, { apiRateData: 5 });

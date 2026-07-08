@@ -16,6 +16,7 @@ import {
   requireAuth,
   requireHuman,
   requireScope,
+  requireTenantAdmin,
 } from '../src/middleware/require-auth.ts';
 
 // This suite drives gated routes via X-User-* headers, which requires the explicit trust opt-in
@@ -44,6 +45,8 @@ function setup() {
   app.get('/admin', (c) => c.json({ ok: true }));
   app.use('/keys', requireAuth(users, undefined, apiKeys), requireHuman);
   app.get('/keys', (c) => c.json({ ok: true }));
+  app.use('/org-admin', requireAuth(users, undefined, apiKeys), requireTenantAdmin);
+  app.get('/org-admin', (c) => c.json({ ok: true }));
   return { db, users, apiKeys, owner, app };
 }
 
@@ -98,6 +101,8 @@ describe('API-key auth (spec 027)', () => {
     const { plaintext } = s.apiKeys.create({ userId: s.owner.id, name: 'k' });
     expect((await s.app.request('/admin', bearer(plaintext))).status).toBe(403);
     expect((await s.app.request('/keys', bearer(plaintext))).status).toBe(403);
+    // requireTenantAdmin is likewise human-only: an API key can never administer its org.
+    expect((await s.app.request('/org-admin', bearer(plaintext))).status).toBe(403);
   });
 
   it('a human session passes scope + human-only routes', async () => {

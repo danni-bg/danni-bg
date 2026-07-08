@@ -11,6 +11,10 @@
 #   spec 037 FR-190..192), DANNI_PROFILE=production. The read substrate (datasets/FTS5/vectors) must
 #   be seeded into the danni_store volume via the sync pipeline (danni sync → curate → index) or a
 #   restored backup.
+#
+# Hosted on a real domain? Set DANNI_PUBLIC_URL + DANNI_COOKIE_DOMAIN + DANNI_PASSKEY_RP_ID (all
+# three together — see infra/ory/README.md "Deploying on a real domain"). Unset, everything below
+# falls back to the localhost single-port defaults, so the localhost self-host journey is unchanged.
 services:
   kratos-postgres:
     environment:
@@ -30,6 +34,34 @@ services:
       # Real relay ONLY (spec 037): recovery/verification links are account-takeover material. The
       # secret gate (check-secrets) additionally rejects Mailpit/localhost-shaped values (FR-191).
       COURIER_SMTP_CONNECTION_URI: ${COURIER_SMTP_CONNECTION_URI:?set COURIER_SMTP_CONNECTION_URI to a real SMTP relay}
+      # Domain parameterization (audit remedy; infra/ory/README.md "Deploying on a real domain").
+      # kratos.yaml hardcodes localhost in every browser-facing URL; the Ory env mapping overrides
+      # each key here. ONE operator var (DANNI_PUBLIC_URL — scheme+host, NO trailing slash) drives
+      # the URLs; compose can't parse URLs, so the cookie domain + passkey RP id are separate
+      # host-only vars. The secret gate sanity-checks DANNI_PUBLIC_URL (https, no trailing slash).
+      # NOTE array semantics (verified against v26.2.0): env lists merge over the YAML PER-INDEX,
+      # so each list supplies exactly as many items as the YAML has — that stomps the Vite-dev
+      # :5173 entries out of prod CORS/return-URLs/passkey origins. The trailing-slash CORS item
+      # only satisfies the schema's uniqueItems; no real Origin header ever matches it.
+      SERVE_PUBLIC_BASE_URL: ${DANNI_PUBLIC_URL:-http://localhost:8790}/kratos/
+      SERVE_PUBLIC_CORS_ALLOWED_ORIGINS: "${DANNI_PUBLIC_URL:-http://localhost:8790},${DANNI_PUBLIC_URL:-http://localhost:8790}/"
+      SELFSERVICE_DEFAULT_BROWSER_RETURN_URL: ${DANNI_PUBLIC_URL:-http://localhost:8790}/
+      SELFSERVICE_ALLOWED_RETURN_URLS: "${DANNI_PUBLIC_URL:-http://localhost:8790},${DANNI_PUBLIC_URL:-http://localhost:8790}/auth/callback,${DANNI_PUBLIC_URL:-http://localhost:8790}/admin/settings,${DANNI_PUBLIC_URL:-http://localhost:8790},${DANNI_PUBLIC_URL:-http://localhost:8790}/auth/callback,${DANNI_PUBLIC_URL:-http://localhost:8790}/admin/settings"
+      # RP id = the registrable domain (no scheme/port). CHANGING it invalidates registered passkeys.
+      SELFSERVICE_METHODS_PASSKEY_CONFIG_RP_ID: ${DANNI_PASSKEY_RP_ID:-localhost}
+      SELFSERVICE_METHODS_PASSKEY_CONFIG_RP_ORIGINS: "${DANNI_PUBLIC_URL:-http://localhost:8790},${DANNI_PUBLIC_URL:-http://localhost:8790}"
+      SELFSERVICE_FLOWS_ERROR_UI_URL: ${DANNI_PUBLIC_URL:-http://localhost:8790}/auth/error
+      SELFSERVICE_FLOWS_SETTINGS_UI_URL: ${DANNI_PUBLIC_URL:-http://localhost:8790}/auth/settings
+      SELFSERVICE_FLOWS_RECOVERY_UI_URL: ${DANNI_PUBLIC_URL:-http://localhost:8790}/auth/recovery
+      SELFSERVICE_FLOWS_RECOVERY_AFTER_DEFAULT_BROWSER_RETURN_URL: ${DANNI_PUBLIC_URL:-http://localhost:8790}/auth/login
+      SELFSERVICE_FLOWS_VERIFICATION_UI_URL: ${DANNI_PUBLIC_URL:-http://localhost:8790}/auth/verification
+      SELFSERVICE_FLOWS_VERIFICATION_AFTER_DEFAULT_BROWSER_RETURN_URL: ${DANNI_PUBLIC_URL:-http://localhost:8790}/
+      SELFSERVICE_FLOWS_LOGOUT_AFTER_DEFAULT_BROWSER_RETURN_URL: ${DANNI_PUBLIC_URL:-http://localhost:8790}/auth/login
+      SELFSERVICE_FLOWS_LOGIN_UI_URL: ${DANNI_PUBLIC_URL:-http://localhost:8790}/auth/login
+      SELFSERVICE_FLOWS_LOGIN_AFTER_DEFAULT_BROWSER_RETURN_URL: ${DANNI_PUBLIC_URL:-http://localhost:8790}/auth/callback
+      SELFSERVICE_FLOWS_REGISTRATION_UI_URL: ${DANNI_PUBLIC_URL:-http://localhost:8790}/auth/register
+      SELFSERVICE_FLOWS_REGISTRATION_AFTER_DEFAULT_BROWSER_RETURN_URL: ${DANNI_PUBLIC_URL:-http://localhost:8790}/auth/callback
+      SESSION_COOKIE_DOMAIN: ${DANNI_COOKIE_DOMAIN:-localhost}
 
   # Mailpit is a dev-only mail sink — its unauthenticated UI would leak every recovery link. The
   # never-activated profile keeps it out of the production stack entirely (not started, no host

@@ -37,6 +37,12 @@ describe('curate.schema', () => {
     expect(c.startsWith('c_')).toBe(true);
   });
 
+  it('canonicalizeName strips a residual non-latin letter that survives normalization', () => {
+    // The Greek α is a \p{Letter} so it survives the strip-to-underscore pass, but it is
+    // not [a-z0-9_], so the identifier guard rewrites the candidate.
+    expect(canonicalizeName('aα', new Set())).toBe('c_a');
+  });
+
   it('inferColumnType returns string on empty samples', () => {
     expect(inferColumnType([]).type).toBe('string');
     expect(inferColumnType([null, '', null]).nullable).toBe(true);

@@ -190,6 +190,135 @@ describe('integration.lifecycle', () => {
     }
   });
 
+  it('dry-run records resources without capturing bytes', async () => {
+    const cfg = makeConfig(storeRoot);
+    const state: FetcherState = { showD1: true, showD2: false, resourceBytes: Buffer.from('hi') };
+    const ctx = buildContext(makeFetcher(state), cfg);
+    const res = await runSync({
+      db,
+      config: cfg,
+      client: ctx.client,
+      http: ctx.http,
+      storeRoot,
+      trigger: 'manual',
+      dryRun: true,
+    });
+    expect(res.totals.discovered).toBe(1);
+    // Dry-run skips the actual byte capture entirely.
+    expect(res.totals.captured).toBe(0);
+    const rs = new ResourcesRepo(db).listByDataset('00000000-0000-0000-0000-000000000001');
+    for (const r of rs) expect(r.raw_path).toBeFalsy();
+  });
+
+  it('swallows a throwing onTouchedDatasets index hook and still reports success', async () => {
+    const cfg = makeConfig(storeRoot);
+    const state: FetcherState = { showD1: true, showD2: false, resourceBytes: Buffer.from('hi') };
+    const ctx = buildContext(makeFetcher(state), cfg);
+    let called = false;
+    const res = await runSync({
+      db,
+      config: cfg,
+      client: ctx.client,
+      http: ctx.http,
+      storeRoot,
+      trigger: 'manual',
+      onTouchedDatasets: () => {
+        called = true;
+        throw new Error('index hook exploded');
+      },
+    });
+    expect(called).toBe(true);
+    // The hook failure is logged (sync.index_hook_failed) but does not fail the run.
+    expect(res.summaryOutcome).not.toBe('failed');
+    expect(res.totals.discovered).toBe(1);
+  });
+
+  it('records a resource failed when the capture subsystem throws unexpectedly', async () => {
+    // captureResource normally absorbs its own errors; the run-sync per-resource try/catch is the
+    // defensive net for an UNEXPECTED throw out of it. Force that by making both resource-capture
+    // writes throw (recordCapture in the try, then recordOutcome in captureResource's own catch) —
+    // so captureResource propagates and run-sync converts it into a `failed` outcome, not a crash.
+    const cfg = makeConfig(storeRoot);
+    const state: FetcherState = { showD1: true, showD2: false, resourceBytes: Buffer.from('hi') };
+    const ctx = buildContext(makeFetcher(state), cfg);
+    const origQuery = db.query.bind(db);
+    // Only the two captureResource writes throw; captureDataset's upsert + all other statements pass.
+    (db as unknown as { query: (sql: string) => unknown }).query = ((sql: string) => {
+      if (
+        sql.includes('UPDATE resources SET bytes') ||
+        sql.includes('UPDATE resources SET last_outcome')
+      ) {
+        throw new Error('simulated resource-write failure');
+      }
+      return origQuery(sql);
+    }) as typeof db.query;
+    try {
+      const res = await runSync({
+        db,
+        config: cfg,
+        client: ctx.client,
+        http: ctx.http,
+        storeRoot,
+        trigger: 'manual',
+      });
+      expect(res.totals.discovered).toBe(1);
+      expect(res.totals.failed).toBeGreaterThanOrEqual(1);
+      expect(res.totals.captured).toBe(0);
+    } finally {
+      (db as unknown as { query: unknown }).query = origQuery;
+    }
+  });
+
+  it('marks a dataset out_of_scope when its stored detail falls outside a scope its summary matched', async () => {
+    // The search summary carries a synthetic tag (so discovery yields + observes the dataset), but
+    // package_show returns the real detail WITHOUT that tag — so reconcileOutOfScope, applied to the
+    // stored row, transitions the observed-but-off-scope dataset to out_of_scope (run-sync 221-222).
+    const cfg = makeConfig(storeRoot, { tags: ['synthetic-scope-tag'] });
+    const standard = JSON.parse(readFileSync(join(FIX, 'package_show/standard.json'), 'utf-8')) as {
+      result: { tags: Array<{ name: string }> };
+    };
+    const searchSummary = {
+      ...standard.result,
+      tags: [...standard.result.tags, { name: 'synthetic-scope-tag' }],
+    };
+    const fetcher = (async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/robots.txt')) {
+        return new Response('User-agent: *\nAllow: /\n', { status: 200 }) as unknown as Response;
+      }
+      if (url.includes('action/package_search')) {
+        const start = new URL(url).searchParams.get('start') ?? '0';
+        const results = start === '0' ? [searchSummary] : [];
+        return new Response(
+          JSON.stringify({ help: '', success: true, result: { count: results.length, results } }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ) as unknown as Response;
+      }
+      if (url.includes('action/package_show')) {
+        return new Response(JSON.stringify(standard), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }) as unknown as Response;
+      }
+      return new Response(Buffer.from('bytes'), {
+        status: 200,
+        headers: { 'content-type': 'application/octet-stream' },
+      }) as unknown as Response;
+    }) as unknown as typeof fetch;
+    const ctx = buildContext(fetcher, cfg);
+    const res = await runSync({
+      db,
+      config: cfg,
+      client: ctx.client,
+      http: ctx.http,
+      storeRoot,
+      trigger: 'manual',
+    });
+    expect(res.totals.outOfScope).toBe(1);
+    const d1 = new DatasetsRepo(db).get('00000000-0000-0000-0000-000000000001');
+    expect(d1?.lifecycle_state).toBe('out_of_scope');
+  });
+
   it('records out_of_scope when a narrowed scope filter excludes a dataset', async () => {
     const cfg = makeConfig(storeRoot);
     const state: FetcherState = {

@@ -131,6 +131,68 @@ describe('schedule.Scheduler', () => {
     expect(fires).toBe(1);
   });
 
+  it('uses the default wall-clock now() when none is injected', async () => {
+    // No `now` override → the built-in `() => new Date()` drives nextFireAfter; an immediate injected
+    // sleep keeps the (up-to-a-minute) wait from actually blocking.
+    let fires = 0;
+    const sched = new Scheduler({
+      cron: '* * * * *',
+      onOverlap: 'skip',
+      sleep: async () => undefined,
+      fire: async () => {
+        fires++;
+      },
+      maxFires: 1,
+    });
+    await sched.start();
+    expect(fires).toBe(1);
+  });
+
+  it('uses the default setTimeout sleep when none is injected', async () => {
+    // No `sleep` override → the built-in setTimeout-based defaultSleep runs. A fixed now just before a
+    // minute boundary makes the real wait ~1ms.
+    let fires = 0;
+    const sched = new Scheduler({
+      cron: '* * * * *',
+      onOverlap: 'skip',
+      now: () => new Date('2026-05-08T00:00:59.999Z'),
+      fire: async () => {
+        fires++;
+      },
+      maxFires: 1,
+    });
+    await sched.start();
+    expect(fires).toBe(1);
+  });
+
+  it('overlap: a concurrent start skips (default onLockSkip) while a fire is in flight', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let fires = 0;
+    // No onLockSkip override → exercises the default no-op skip callback.
+    const sched = new Scheduler({
+      cron: '* * * * *',
+      onOverlap: 'skip',
+      now: () => new Date('2026-05-08T00:00:00Z'),
+      sleep: async () => undefined,
+      fire: async () => {
+        fires++;
+        await gate; // hold this.running = true across a concurrent start()
+      },
+      maxFires: 1,
+    });
+    const p1 = sched.start();
+    // Let p1 progress past its immediate sleep and into the gated fire.
+    await new Promise((r) => setTimeout(r, 0));
+    const p2 = sched.start(); // sees this.running === true → overlap-skip via default onLockSkip
+    await p2;
+    release();
+    await p1;
+    expect(fires).toBe(1);
+  });
+
   it('nextFireAfter exposes parsed cron schedule', () => {
     const sched = new Scheduler({
       cron: '0 12 * * *',

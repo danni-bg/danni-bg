@@ -10,7 +10,7 @@ import type {
   TransformRule,
 } from './curator.ts';
 import { curatedRelDir } from './curator.ts';
-import { type DetectedEncoding, decodeBytes, detectEncoding } from './encoding.ts';
+import { decodeBytes, detectEncoding } from './encoding.ts';
 import { normalizeBoolean, normalizeDate, normalizeDecimal } from './normalize.ts';
 import { canonicalizeName, inferColumnType } from './schema.ts';
 import { startsWithZipMagic } from './xlsx.ts';
@@ -90,7 +90,11 @@ function parseCsv(text: string): ParsedCsv {
 }
 
 export class CsvCurator implements Curator {
-  readonly kind = 'tabular' as const;
+  readonly kind: 'tabular';
+
+  constructor() {
+    this.kind = 'tabular';
+  }
 
   canHandle(ctx: CurateContext): boolean {
     const fmt = (ctx.resource.declared_format ?? '').toLowerCase();
@@ -239,12 +243,6 @@ export function curateCsvFromText(
   }
 }
 
-function _refUnused(_x: DetectedEncoding): void {
-  // type-import keepalive (no-op)
-}
-
 function computeRel(resource: ResourceRow): string {
   return curatedRelDir(resource);
 }
-
-void _refUnused;

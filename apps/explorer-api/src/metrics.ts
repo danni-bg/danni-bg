@@ -72,7 +72,11 @@ export class Metrics {
   private readonly quotaRejections = new Map<string, number>(); // per quota kind
   private readonly chatOutcomes = new Map<string, number>();
   // Distinct real tenants that have been assigned their own series (bounds cardinality, FR-271).
-  private readonly seenTenants = new Set<string>();
+  private readonly seenTenants: Set<string>;
+
+  constructor() {
+    this.seenTenants = new Set<string>();
+  }
 
   /**
    * Normalise a caller's tenant to a bounded label (FR-271): empty/absent → `default`; a known tenant

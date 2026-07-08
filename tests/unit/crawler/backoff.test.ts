@@ -37,6 +37,37 @@ describe('crawler.BackoffRunner', () => {
     expect(sleeps).toHaveLength(2);
   });
 
+  it('caps the exponential delay at maxMs', () => {
+    const runner = new BackoffRunner({
+      initialMs: 100,
+      maxMs: 150,
+      failureBudget: 10,
+      random: () => 1,
+    });
+    // attempt 5 → 100 * 2**5 = 3200, capped to maxMs=150; random()=1 keeps the full jittered value.
+    expect(runner.delayMs(5)).toBe(150);
+    // attempt 0 → below the cap, returned as-is.
+    expect(runner.delayMs(0)).toBe(100);
+  });
+
+  it('uses the real default sleep when none is injected', async () => {
+    // No `sleep` override: the one retry drives the built-in setTimeout-based defaultSleep.
+    const runner = new BackoffRunner({
+      initialMs: 1,
+      maxMs: 1,
+      failureBudget: 2,
+      random: () => 0,
+    });
+    let calls = 0;
+    await expect(
+      runner.run('t', async () => {
+        calls++;
+        return { ok: false, error: new Error('boom') };
+      }),
+    ).rejects.toBeInstanceOf(RetryExhausted);
+    expect(calls).toBe(2);
+  });
+
   it('honors retryAfterMs from outcome', async () => {
     const sleeps: number[] = [];
     const runner = new BackoffRunner({

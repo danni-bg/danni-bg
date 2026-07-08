@@ -121,4 +121,31 @@ describe('index.fts', () => {
     const cnt = s.db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM datasets_fts').get();
     expect(cnt?.n).toBe(0);
   });
+
+  it('readColumnLabels tolerates empty, column-less, malformed, and sourceName-less schemas', () => {
+    const res = new ResourcesRepo(s.db);
+    const arts = new CuratedArtifactsRepo(s.db);
+    const mk = (rid: string, schemaJson: string): void => {
+      res.upsert({ id: rid, datasetId: 'd1', sourceUrl: `https://x/${rid}.csv` });
+      arts.upsert({
+        datasetId: 'd1',
+        resourceId: rid,
+        kind: 'tabular',
+        path: `d1/${rid}/data.ndjson`,
+        schemaJson,
+        transformRulesJson: '[]',
+        curatorVersion: 'v1',
+      });
+    };
+    mk('r-empty', ''); // falsy schema_json → []
+    mk('r-nocols', JSON.stringify({ kind: 'tabular' })); // no columns key → []
+    mk('r-bad', 'not-json{'); // JSON.parse throws → catch → []
+    mk('r-canon', JSON.stringify({ columns: [{ canonicalName: 'КолонаБезИзточник' }] })); // sourceName ?? canonicalName fallback
+
+    const row = buildFtsRow(s.db, 'd1');
+    // Original 'Бюджет' column plus the canonicalName-only fallback both surface; the empty/bad/no-column
+    // artifacts contribute nothing and never throw.
+    expect(row?.column_labels).toContain('Бюджет');
+    expect(row?.column_labels).toContain('КолонаБезИзточник');
+  });
 });

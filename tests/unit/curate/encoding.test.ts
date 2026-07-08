@@ -21,6 +21,12 @@ describe('curate.encoding', () => {
     expect(det.reason).toBe('declared');
   });
 
+  it('falls through to the heuristic for an unrecognized declared charset', () => {
+    // a truthy-but-unknown charset matches neither the utf-8 nor cp1251 branch
+    const det = detectEncoding(Buffer.from('hello'), 'iso-8859-1');
+    expect(det.reason).toBe('heuristic-utf8');
+  });
+
   it('returns utf-8 with no high-bit bytes', () => {
     const det = detectEncoding(Buffer.from('hello world'));
     expect(det.encoding).toBe('utf-8');
