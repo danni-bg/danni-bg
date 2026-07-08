@@ -68,10 +68,37 @@ capabilities each have their own spec:
   `apps/explorer-api/src/{readiness,metrics,trace}.ts`); the scalable IaC (Terraform/k8s/observability),
   the `OPERATIONS.md` runbook, and the OpenBao/Headscale `vault` repo are commercial.
 
+- 034 identity trust boundary: X-User-* headers (a spoofable identity up to bootstrap-admin on the
+  directly-exposed single port) are no longer trusted by default — `readAuth` yields anonymous unless
+  the explicit `TRUST_PROXY_AUTH_HEADERS` opt-in asserts a header-sanitizing proxy (Oathkeeper) is the
+  only path to the app (`middleware/auth.ts` `trustProxyAuthHeaders`, FR-160); with trust off, forged
+  headers get 401 and a valid Kratos cookie always resolves to the cookie's identity (FR-161).
+  Bootstrap-admin promotion (`ADMIN_BOOTSTRAP_EMAILS`) additionally requires `identity.verified` — an
+  unverified match creates a plain `user` row, evaluated at creation only (later promotion via
+  `danni admin grant`, FR-163). Hermetic tests keep driving auth via headers by enabling the flag in
+  setup; the trust-off default + bootstrap-verified rule are asserted (FR-164) — closes the hole
+  single-port mode (020) left open; builds on 019/020, API-key auth (027) unaffected
 - 035 chat provider lockdown: the client-supplied `provider` (SSRF/egress vector) is removed from
   `/api/chat` — the strict schema 400s a request still sending it; `selectModel(serverDefault)` builds
   the model from admin runtime settings → `EXPLORER_DEFAULT_*` only, and the SPA/eval send no provider
   (finishes what 022 started in the UI)
+- 036 org role integrity: owner protection on EVERY member-mutation path (spec 029 guarded only
+  PATCH-grant + DELETE-last-owner). `TenantsRepo.addMember` is insert-only (`ON CONFLICT … DO
+  NOTHING`) — POST `/api/tenant/members` re-adding an existing member 409s `already_member` instead of
+  silently overwriting their role (FR-180); PATCH owner-gates BOTH directions — granting `owner` AND
+  any change targeting a current owner requires an `owner` caller (403, FR-181); no path may demote or
+  remove a tenant's LAST owner (`tenants.ownerCount`, 400 `last_owner`, FR-182) — an org can never
+  reach zero owners through the API; super-admin tenant routes keep the same invariant (FR-183). The
+  FR-184 authorization matrix is tested — builds on 029
+- 037 production mail delivery: Kratos recovery/verification mail (account-takeover material) must
+  reach a REAL SMTP relay outside dev — the prod overlay used to inherit the Mailpit catcher published
+  unauthenticated on :14438. `COURIER_SMTP_CONNECTION_URI` joins `REQUIRED_SECRETS`
+  (`src/lib/secret-scan.ts`) with a VALUE check: a Mailpit/localhost-shaped URI (`DEV_SMTP_HOST`)
+  counts as a placeholder violation on a non-dev profile (FR-190/191); `docker-compose.prod.yml`
+  passes `${COURIER_SMTP_CONNECTION_URI:?…}` into the `kratos` service and disables Mailpit via
+  `profiles` (FR-192). Dev is unchanged: the base compose defaults the courier to
+  `smtp://mailpit:1025/?disable_starttls=true` and keeps Mailpit on :14438 (FR-193) — builds on
+  019/030
 
 - 038 API-key scope coverage for `/api/me`: every personal surface now declares an explicit access
   class (FR-200) enforced by the spec-027 guards instead of bare `requireAuth` — human-only
@@ -130,6 +157,46 @@ capabilities each have their own spec:
   in `docs/backup-restore.md`; per-request `users.last_login_at` / `api_keys.last_used_at` bumps are
   throttled to at most once per 5 min (`repos/last-seen.ts` `bumpDue`), so steady-state authenticated
   reads perform zero writes (timestamps become "last use within N minutes")
+- 044 runtime image hardening: the published image is minimal + non-root (it used to ship the whole
+  build stage — dev toolchain, specs, tests — running as root against `/data`). A separate `deps`
+  layer installs production-only deps (`bun install --frozen-lockfile --production --ignore-scripts`
+  — no Vite/Playwright/test toolchain, FR-260); the runtime stage COPYs an explicit allowlist (`src`,
+  `apps/explorer-api/src`, built `apps/explorer-web/dist`, `packages`, `migrations`, `scripts`,
+  `vendor`, `bin` + manifests) instead of `/app` wholesale, so `specs/`/`tests/`/`eval/`/SPA source
+  are absent (FR-261); the container runs as `USER 10001` (fixed documented UID for volume chown,
+  FR-262); the entrypoint contract (check-secrets → migrate-on-boot → serve) is preserved exactly
+  (FR-263); the CI image job asserts no dev packages/trees + non-zero UID (FR-264)
+- 045 SaaS observability: the in-process metrics registry (spec 030) gains the three signals a SaaS
+  alerts on. Per-route request duration is a real Prometheus histogram
+  (`danni_http_request_duration_ms_bucket{route,le}`, one fixed bucket ladder spanning ~5 ms API reads
+  to 60 s+ chat/SSE turns, so `histogram_quantile` yields p95/p99 — FR-270); LLM token/cost + HTTP
+  request counters carry a bounded-cardinality `tenant` label (distinct-tenant cap, overflow folds
+  into `tenant="other"` — FR-271); `danni_quota_rejections_total{kind="tokens"|"requests"}` counts the
+  spec-021 chat token-quota 429 (`routes/chat.ts`) and the spec-028 request-quota 429
+  (`api-metering.ts`) distinctly from rate limits (FR-272); `/metrics` is GATED
+  (`middleware/metrics-gate.ts`: bearer `METRICS_TOKEN` and/or `METRICS_ALLOW_CIDR`, constant-time
+  token compare; an unset gate fails closed on non-dev profiles, dev defaults open — FR-273) while
+  `/healthz`/`/readyz` stay public; request-id correlation, chat outcomes, and metadata-only spans are
+  preserved (FR-274) — builds on 021/028/029/039
+- 046 CI e2e gate: the nine hermetic Playwright specs (`apps/explorer-web/e2e/us1-map …
+  us9-admin-settings.e2e.ts`) now gate merge AND publish — a dedicated `e2e` CI job runs them headless
+  (chromium) on every PR/push and the `image` job `needs` it (FR-280). The hermetic boundary is
+  sanctioned: every `/api/**` + Kratos route is stubbed in-page via `page.route` (`e2e/fixtures.ts`) —
+  no live mirror, LLM, or Ory in CI (FR-281). The gate exercises the PRODUCTION build: `bun run
+  test:e2e` = `vite build` + `E2E_PREVIEW=1` `vite preview` as the webServer, catching bundle-only
+  regressions the dev server would mask (FR-282); all committed `.e2e.ts` run — no CI-side skip list
+  (FR-283); cached chromium, ≤1 retry, trace/report artifacts on failure, a job timeout (FR-284). The
+  DeepEval agentic suite (018/024) stays manual/nightly by design
+- 047 self-host parity: no dangling promises after the open-core split — everything this repo
+  references exists here or is explicitly marked commercial. `danni.config.example.json` now syncs the
+  flagship portal as-is (`portal.api: "egov-bg"`, `baseUrl: "https://data.egov.bg/api/"` — FR-290) and
+  is parsed through the config schema by a test so it can't drift invalid (FR-291); the dangling
+  `infra/observability` / `docs/OPERATIONS.md` pointers (metrics.ts/trace.ts/app.ts/`.env.example`)
+  are reworded to name the commercial deploy repo explicitly, locked by
+  `tests/unit/selfhost-parity.test.ts` (FR-292); the README self-host claim is locked by
+  `scripts/smoke-selfhost.sh` (clean checkout → compose + dev Ory stack → `/healthz` + SPA, FR-293);
+  the commercial-only surface is ONE maintained README open-core list (FR-294) — pointer fixes only
+  (backup capability is 043, image contents 044, `/metrics` exposure 045)
 - 053 MCP read parity: the two front doors over the shared read substrate (`src/read`) had drifted —
   the chat `readResource` tool exposed the spec-017 value-filter (`filters` → `GridQuery`) but the MCP
   `read_resource` tool (`src/mcp/server.ts`) could only page. The MCP tool now accepts optional

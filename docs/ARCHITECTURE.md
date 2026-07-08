@@ -220,6 +220,10 @@ Migrations are applied in numeric order by a checksum-guarded runner (`src/store
 | `012_user_avatar` | `users.avatar_url` | profile pictures (spec 022) |
 | `013_chat_sessions` | `chat_sessions` + `chat_messages` | persistent/resumable chat (spec 020) |
 | `014_message_usage_duration` | `chat_messages.usage_json` + `duration_ms` | per-turn tokens + reply time kept on each message (spec 026) |
+| `015_api_keys` | `api_keys` (SHA-256 `key_hash`, `prefix` for identification, JSON `scopes`) | machine-client API keys (spec 027) |
+| `016_api_usage` | `api_usage` (one row per metered request, keyed by principal + route class) + `api_keys.quota_limit` | API request metering & quotas (spec 028) |
+| `017_multi_tenancy` | `tenants` + `tenant_members` (org roles); `tenant_id` on `api_keys`/`chat_sessions`/`token_usage`/`api_usage`; `platform_settings` repivoted to composite `(tenant_id, key)`; `default`-tenant backfill | multi-tenancy control plane (spec 029) |
+| `018_active_tenant` | `users.active_tenant_id` (persisted active-org selection) | tenant activation (spec 041) |
 
 Vectors are stored as plain BLOBs; similarity search is in-process cosine + Reciprocal-Rank-Fusion with FTS5. The corpus is deserialized **once** into a resident in-process matrix (`src/index/vector-cache.ts`), reused across queries and invalidated in O(1) against `embeddings_meta.updated_at` — which each `danni index` run bumps once it has written/purged vectors (`bumpEmbeddingsMeta`), so a running explorer/MCP reflects new vectors on its next query without a restart (spec 050). Per-query allocation is O(candidates), not O(corpus). The `sqlite-vec` `vec0` virtual-table path remains an optional future upgrade for true ANN; `openDb` does **not** load the extension by default (`loadVec` defaults to `false`) and opens fine without the vendored binary.
 
@@ -400,7 +404,8 @@ reload/resume; one `UsageFooter` renders both the live and the kept-after-comple
 
 ## 7. Identity, accounts & the chat platform
 
-On top of the read substrate sits an authenticated chat platform (specs 019–022). Public browsing
+On top of the read substrate sits an authenticated chat platform (specs 019–022) and a SaaS control
+plane — API keys, request metering, multi-tenant orgs (specs 027–029 + 036/038–042). Public browsing
 (map, datasets, search, regions) stays anonymous; **chat and `/api/admin/*` are gated**.
 
 - **Identity (spec 019).** danni owns an Ory stack (Kratos + Oathkeeper **v26.2.0** + Postgres +
@@ -433,6 +438,27 @@ On top of the read substrate sits an authenticated chat platform (specs 019–02
 - **Account & chat UX (spec 022).** Avatar dropdown (name from Kratos traits, role, logout), a full
   `/auth/settings` account page (appearance / profile / password / passkeys / usage), profile pictures
   (`users.avatar_url`), and a header link to the repo.
+- **API keys & request metering (specs 027/028, semantics 038/040).** Machine clients authenticate
+  with `Authorization: Bearer dnk_live_…` keys, stored **hashed** (`api_keys` — the secret is shown
+  once at creation), scoped `read`/`chat` and enforced per surface (`requireScope`/`requireHuman`;
+  every `/api/me` route declares an explicit access class). Keyed traffic on the public read API is
+  rate-limited (in-process token bucket) and request-quota'd **per key** — `api_usage` records one
+  row per admitted request, compared against the key's own `quota_limit` (super-admin-set; `null` =
+  plan default) — while anonymous browsing stays free and unmetered; the chat route is rate-limited
+  + recorded the same way (`dataApiGate`/`chatMeter`, `middleware/api-metering.ts`). The knobs
+  (`apiRate{Data,Chat}`/`apiQuota{Data,WindowSec}`) are runtime admin settings; users see per-key
+  request counts (`/api/me/api-usage`), admins the whole rollup.
+- **Multi-tenant control plane (specs 029/036/041/042).** `tenants` / `tenant_members` hold orgs
+  and org-level roles (`owner`/`admin`/`member`) — the table is `tenants` because `organizations`
+  already names egov dataset publishers. Every tenant-owned row (`api_keys`, `chat_sessions`,
+  `token_usage`, `api_usage`) carries a `tenant_id`; `requireAuth` resolves the caller's **active
+  org** — a persisted per-user selection (`users.active_tenant_id`, switched via `POST
+  /api/tenant/switch`; an API key stays bound to its own tenant). Orgs self-manage via `/api/tenant`
+  (members CRUD with owner protection on every path: insert-only add, owner-gated owner changes, a
+  ≥1-owner invariant — spec 036); super-admins manage any org under `/api/admin/tenants`.
+  `platform_settings` is keyed `(tenant_id, key)` with a `global` fallback row, which is what the
+  tenant-scoped settings resolution above rides on. Existing single-tenant data is backfilled into
+  the `default` org with no behavior change.
 
 The backend pieces live under `apps/explorer-api/src/{auth,chat,middleware,routes}` + `src/store/repos`;
 the SPA account/chat UI under `apps/explorer-web/src/{auth,account,admin,chat}`.
