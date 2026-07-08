@@ -99,6 +99,69 @@ describe('createChatSessionStore — send', () => {
     expect(typeof assistant?.durationMs).toBe('number'); // a fresh send DOES record duration
   });
 
+  it('routes message/citations/anchors callbacks into the transcript + effects', async () => {
+    const effects = recordingEffects();
+    const stopGeneration = mock(async () => {});
+    const sendChat = mock(async (_body, cb: ChatCallbacks) => {
+      cb.onMessage?.('gen-42'); // records the generation id for a later server-side stop
+      cb.onToken?.('Да');
+      cb.onCitations?.([
+        { datasetId: 'd1', titleBg: 'Набор', sourceUrl: 'u', freshness: {} as never },
+      ]);
+      cb.onAnchors?.({ geoEntityIds: ['geo:bg-oblast-ruse'], datasetIds: [] });
+      cb.onAnchors?.({ geoEntityIds: [], datasetIds: [] }); // empty anchor → no re-selection
+      cb.onDone?.();
+    });
+    const deps = baseDeps({
+      effects,
+      transport: {
+        sendChat: sendChat as unknown as ChatSessionDeps['transport']['sendChat'],
+        resumeChat: mock(async () => {}) as unknown as ChatSessionDeps['transport']['resumeChat'],
+      },
+      api: { ...baseDeps().api, stopGeneration },
+    });
+    const store = createChatSessionStore(deps);
+
+    await store.getState().send('въпрос', { scope: {} });
+
+    const assistant = store.getState().messages[1];
+    expect(assistant?.content).toBe('Да');
+    expect(assistant?.citations?.[0]?.datasetId).toBe('d1');
+    // The non-empty anchor re-selected regions; the empty one did not append.
+    expect(effects.regions).toEqual([['geo:bg-oblast-ruse']]);
+
+    // The recorded generation id is what a subsequent stop targets server-side.
+    store.getState().stop();
+    expect(stopGeneration).toHaveBeenCalledWith('gen-42');
+  });
+
+  it('detach aborts the in-flight reader locally without stopping it server-side', async () => {
+    const stopGeneration = mock(async () => {});
+    const storage = memoryStorage({ 'danni.chat.session': 's1' });
+    const deps = baseDeps({
+      storage,
+      transport: {
+        sendChat: mock(async () => {}) as unknown as ChatSessionDeps['transport']['sendChat'],
+        resumeChat: hangingResume() as unknown as ChatSessionDeps['transport']['resumeChat'],
+      },
+      api: {
+        ...baseDeps().api,
+        getSession: mock(async () => resumed({ streaming: { messageId: 'gen-9' } })),
+        stopGeneration,
+      },
+    });
+    const store = createChatSessionStore(deps);
+    const p = store.getState().restore();
+    await flush();
+    expect(store.getState().streaming).toBe(true);
+
+    store.getState().detach();
+    await expect(p).resolves.toBeUndefined();
+    expect(store.getState().streaming).toBe(false);
+    expect(stopGeneration).not.toHaveBeenCalled(); // detach is local-only (FR-412)
+    expect(store.getState().error).toBeNull(); // an abort is not an error
+  });
+
   it('is a no-op for a blank question or while already streaming', async () => {
     const store = createChatSessionStore(baseDeps());
     await store.getState().send('   ', { scope: {} });
@@ -118,6 +181,51 @@ describe('createChatSessionStore — send', () => {
     await store.getState().send('въпрос', { scope: {} });
     expect(store.getState().error).toBe('мрежова грешка');
     expect(store.getState().streaming).toBe(false);
+  });
+
+  it('tolerates a session-list refresh failure (refreshSessions swallows the rejection)', async () => {
+    // onDone triggers refreshSessions(); if listSessions rejects, the turn must still complete cleanly.
+    const deps = baseDeps({
+      transport: {
+        sendChat: mock(async (_body, cb: ChatCallbacks) => {
+          cb.onToken?.('ok');
+          cb.onDone?.();
+        }) as unknown as ChatSessionDeps['transport']['sendChat'],
+        resumeChat: mock(async () => {}) as unknown as ChatSessionDeps['transport']['resumeChat'],
+      },
+      api: {
+        listSessions: mock(async () => {
+          throw new Error('offline');
+        }),
+        getSession: mock(async () => {
+          throw new Error('not stubbed');
+        }),
+        deleteSession: mock(async () => {}),
+        stopGeneration: mock(async () => {}),
+      },
+    });
+    const store = createChatSessionStore(deps);
+    await store.getState().send('въпрос', { scope: {} });
+    await flush(); // let the swallowed refreshSessions rejection settle
+    expect(store.getState().streaming).toBe(false);
+    expect(store.getState().sessions).toEqual([]); // failed refresh left the list untouched
+  });
+
+  it('surfaces a server-sent error event (onError) as the message error', async () => {
+    // Distinct from a thrown network failure: the stream opens fine but the server emits an `error`
+    // SSE event mid-turn, which the onError callback routes into state.
+    const deps = baseDeps({
+      transport: {
+        sendChat: mock(async (_body, cb: ChatCallbacks) => {
+          cb.onError?.('провалено генериране');
+          cb.onDone?.();
+        }) as unknown as ChatSessionDeps['transport']['sendChat'],
+        resumeChat: mock(async () => {}) as unknown as ChatSessionDeps['transport']['resumeChat'],
+      },
+    });
+    const store = createChatSessionStore(deps);
+    await store.getState().send('въпрос', { scope: {} });
+    expect(store.getState().error).toBe('провалено генериране');
   });
 });
 
@@ -319,6 +427,48 @@ describe('createChatSessionStore — session transitions', () => {
     expect(store.getState().messages.map((m) => m.content)).toEqual(['Q', 'A']);
     expect(effects.focusCleared).toBeGreaterThan(0);
     expect(effects.regions.at(-1)).toEqual(['geo:bg-oblast-ruse']);
+  });
+
+  it('openSession re-attaches when the opened conversation is still streaming (FR-411)', async () => {
+    const resumeChat = mock(async (_id, cb: ChatCallbacks) => {
+      cb.onToken?.('продължение');
+      cb.onDone?.();
+    });
+    const getSession = mock(async () =>
+      resumed({
+        sessionId: 's3',
+        messages: [{ role: 'user', content: 'Q' }],
+        streaming: { messageId: 'gen-7' },
+      }),
+    );
+    const deps = baseDeps({
+      transport: {
+        sendChat: mock(async () => {}) as unknown as ChatSessionDeps['transport']['sendChat'],
+        resumeChat: resumeChat as unknown as ChatSessionDeps['transport']['resumeChat'],
+      },
+      api: { ...baseDeps().api, getSession },
+    });
+    const store = createChatSessionStore(deps);
+
+    await store.getState().openSession('s3');
+
+    expect(resumeChat).toHaveBeenCalledTimes(1);
+    expect(store.getState().messages.at(-1)?.content).toBe('продължение');
+    expect(store.getState().streaming).toBe(false);
+  });
+
+  it('removeSession surfaces a delete failure', async () => {
+    const deps = baseDeps({
+      api: {
+        ...baseDeps().api,
+        deleteSession: mock(async () => {
+          throw new Error('500');
+        }),
+      },
+    });
+    const store = createChatSessionStore(deps);
+    await store.getState().removeSession('s1');
+    expect(store.getState().error).toBe('Неуспешно изтриване на разговора.');
   });
 
   it('openSession surfaces a load failure', async () => {

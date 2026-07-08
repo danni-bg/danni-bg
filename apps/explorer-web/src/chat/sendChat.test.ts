@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import type { ChatCallbacks, ChatRequestBody } from './sendChat.ts';
-import { dispatchSSEEvent, sendChat } from './sendChat.ts';
+import { dispatchSSEEvent, resumeChat, sendChat } from './sendChat.ts';
 
 function streamingFetch(sseText: string): typeof fetch {
   return (async () => {
@@ -48,6 +48,20 @@ describe('dispatchSSEEvent', () => {
       'error:boom',
       'done',
     ]);
+  });
+
+  it('routes the message + usage events to their callbacks', () => {
+    const calls: string[] = [];
+    const cb: ChatCallbacks = {
+      onMessage: (id) => calls.push(`msg:${id}`),
+      onUsage: (u) => calls.push(`usage:${u.inputTokens}/${u.outputTokens}/${u.cachedInputTokens}`),
+    };
+    dispatchSSEEvent({ event: 'message', data: '{"messageId":"gen-9"}' }, cb);
+    dispatchSSEEvent(
+      { event: 'usage', data: '{"inputTokens":10,"outputTokens":2,"cachedInputTokens":1}' },
+      cb,
+    );
+    expect(calls).toEqual(['msg:gen-9', 'usage:10/2/1']);
   });
 
   it('ignores unknown events (incl. the now-unconsumed `tool`) and tolerates missing callbacks', () => {
@@ -111,5 +125,84 @@ describe('sendChat (streaming IO)', () => {
       }) as unknown as Response) as typeof fetch;
     await sendChat(body, { onError: (m) => errors.push(m) }, badFetch);
     expect(errors).toEqual(['invalid chat request']);
+  });
+
+  it('maps the quota_exceeded code to the Bulgarian limit message', async () => {
+    const errors: string[] = [];
+    const quotaFetch = (async () =>
+      ({
+        ok: false,
+        status: 429,
+        json: async () => ({ error: { code: 'quota_exceeded', message: 'over' } }),
+      }) as unknown as Response) as typeof fetch;
+    await sendChat(body, { onError: (m) => errors.push(m) }, quotaFetch);
+    expect(errors[0]).toContain('лимита си на токени');
+  });
+
+  it('falls back to a status message when the error body is not parseable', async () => {
+    const errors: string[] = [];
+    const brokenFetch = (async () =>
+      ({
+        ok: false,
+        status: 502,
+        json: async () => {
+          throw new Error('not json');
+        },
+      }) as unknown as Response) as typeof fetch;
+    await sendChat(body, { onError: (m) => errors.push(m) }, brokenFetch);
+    expect(errors).toEqual(['request failed (502)']);
+  });
+});
+
+describe('resumeChat (mid-stream re-attach)', () => {
+  it('reads the replayed SSE stream from the generation endpoint', async () => {
+    let seenUrl = '';
+    const seen: string[] = [];
+    const replayFetch = (async (url: string) => {
+      seenUrl = url;
+      const sse = 'event: token\ndata: {"delta":"още"}\n\n' + 'event: done\ndata: {}\n\n';
+      return {
+        ok: true,
+        body: new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(new TextEncoder().encode(sse));
+            c.close();
+          },
+        }),
+      } as unknown as Response;
+    }) as typeof fetch;
+    await resumeChat(
+      'gen-9',
+      { onToken: (d) => seen.push(`t:${d}`), onDone: () => seen.push('done') },
+      replayFetch,
+    );
+    expect(seenUrl).toBe('/api/me/generations/gen-9/stream');
+    expect(seen).toEqual(['t:още', 'done']);
+  });
+
+  it('treats a gone generation (non-OK) as a quiet done, not an error', async () => {
+    const seen: string[] = [];
+    const goneFetch = (async () =>
+      ({ ok: false, status: 404 }) as unknown as Response) as typeof fetch;
+    await resumeChat(
+      'gen-x',
+      { onDone: () => seen.push('done'), onError: () => seen.push('error') },
+      goneFetch,
+    );
+    expect(seen).toEqual(['done']);
+  });
+
+  it('forwards the abort signal to the generation fetch', async () => {
+    const controller = new AbortController();
+    let seenSignal: AbortSignal | undefined;
+    const capturingFetch = (async (_url: string, init?: RequestInit) => {
+      seenSignal = init?.signal ?? undefined;
+      return {
+        ok: true,
+        body: new ReadableStream({ start: (c) => c.close() }),
+      } as unknown as Response;
+    }) as typeof fetch;
+    await resumeChat('gen-9', {}, capturingFetch, controller.signal);
+    expect(seenSignal).toBe(controller.signal);
   });
 });
