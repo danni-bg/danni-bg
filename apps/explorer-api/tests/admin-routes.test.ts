@@ -111,6 +111,39 @@ describe('GET/PUT /api/admin/settings', () => {
     }
   });
 
+  it('GET reports source=env with the masked env LLM when EXPLORER_DEFAULT_* is set', async () => {
+    // No persisted setting but an env default → resolveDefaultView returns the env LLM (masked).
+    // Set explicitly rather than relying on an ambient .env (absent on a clean CI checkout).
+    const saved = {
+      p: process.env.EXPLORER_DEFAULT_PROVIDER,
+      m: process.env.EXPLORER_DEFAULT_MODEL,
+      k: process.env.EXPLORER_DEFAULT_API_KEY,
+    };
+    process.env.EXPLORER_DEFAULT_PROVIDER = 'openai-compatible';
+    process.env.EXPLORER_DEFAULT_MODEL = 'env-model';
+    process.env.EXPLORER_DEFAULT_API_KEY = 'sk-env-secret';
+    try {
+      const body = (await (await get(ADMIN)).json()) as {
+        source: string;
+        llm: { model: string; apiKeyMasked: boolean; apiKeyHint: string | null };
+      };
+      expect(body.source).toBe('env');
+      expect(body.llm.model).toBe('env-model');
+      expect(body.llm.apiKeyMasked).toBe(true);
+      expect(body.llm.apiKeyHint).toBe('••••cret');
+      expect(JSON.stringify(body)).not.toContain('sk-env-secret'); // never echoed raw
+    } finally {
+      for (const [k, v] of [
+        ['EXPLORER_DEFAULT_PROVIDER', saved.p],
+        ['EXPLORER_DEFAULT_MODEL', saved.m],
+        ['EXPLORER_DEFAULT_API_KEY', saved.k],
+      ] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
   it('PUT toggles round-trips', async () => {
     await put(ADMIN, { toggles: { chatEnabled: false, defaultTokenLimit: 3600 } });
     const body = (await (await get(ADMIN)).json()) as { toggles: unknown };
