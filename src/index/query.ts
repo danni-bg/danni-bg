@@ -156,11 +156,17 @@ function topKCosine(
 export async function searchRanked(opts: QueryOptions): Promise<RankedHit[]> {
   const limit = opts.limit ?? 5;
 
-  const ftsResults = opts.db
-    .query<{ dataset_id: string }, [string]>(
-      'SELECT dataset_id FROM datasets_fts WHERE datasets_fts MATCH ? ORDER BY rank LIMIT 50',
-    )
-    .all(escapeFts(opts.query));
+  // An empty/whitespace-only query (e.g. a non-text last chat message) escapes to '', and FTS5
+  // `MATCH ''` is a syntax error — treat it as "no keyword hits" instead of throwing. Vector recall
+  // below still runs, so an empty query degrades to semantic-only rather than crashing the turn.
+  const ftsMatch = escapeFts(opts.query);
+  const ftsResults = ftsMatch
+    ? opts.db
+        .query<{ dataset_id: string }, [string]>(
+          'SELECT dataset_id FROM datasets_fts WHERE datasets_fts MATCH ? ORDER BY rank LIMIT 50',
+        )
+        .all(ftsMatch)
+    : [];
 
   const ftsRanks = new Map<string, number>();
   ftsResults.forEach((r, i) => ftsRanks.set(r.dataset_id, i + 1));

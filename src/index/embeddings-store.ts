@@ -25,10 +25,24 @@ export function ensureEmbeddingsTable(db: Database): void {
   );
 }
 
+/**
+ * The next strictly-monotonic `updated_at` value: the wall clock, or `prev + 1ms` when the clock has
+ * not advanced past a previously-recorded value. Keeping every write monotonic (not just
+ * {@link bumpEmbeddingsMeta}) means a model-change `setEmbeddingsMeta` can never move the token
+ * BACKWARDS below a prior bump — otherwise a fast re-index's own bump could merely restore the old
+ * value and be masked from the vector cache (spec 050 FR-321).
+ */
+function nextMonotonicUpdatedAt(prev: string | null): string {
+  const next = nowIso();
+  if (prev !== null && next <= prev) return toIso(parseIso(prev).getTime() + 1);
+  return next;
+}
+
 export function setEmbeddingsMeta(db: Database, modelId: string, dimension: number): void {
+  const next = nextMonotonicUpdatedAt(getEmbeddingsMeta(db).updated_at);
   db.query(
     'UPDATE embeddings_meta SET model_id = ?, dimension = ?, updated_at = ? WHERE id = 1',
-  ).run(modelId, dimension, nowIso());
+  ).run(modelId, dimension, next);
 }
 
 /**
@@ -39,9 +53,7 @@ export function setEmbeddingsMeta(db: Database, modelId: string, dimension: numb
  * never masked; the value stays a valid ISO-8601 timestamp.
  */
 export function bumpEmbeddingsMeta(db: Database): void {
-  const prev = getEmbeddingsMeta(db).updated_at;
-  let next = nowIso();
-  if (prev !== null && next <= prev) next = toIso(parseIso(prev).getTime() + 1);
+  const next = nextMonotonicUpdatedAt(getEmbeddingsMeta(db).updated_at);
   db.query('UPDATE embeddings_meta SET updated_at = ? WHERE id = 1').run(next);
 }
 
