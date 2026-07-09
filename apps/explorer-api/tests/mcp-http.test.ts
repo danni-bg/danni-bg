@@ -159,9 +159,12 @@ describe('hosted MCP server (spec 061)', () => {
       expect(res.status).toBeLessThan(500);
     });
 
-    // The real createApp mount (exercises the `if (ctx.mcp)` branch + the gate composed in app.ts).
+    // The real createApp mount (exercises the `if (ctx.mcp)` branch, the gate, AND the mounted
+    // handler arrow in app.ts — so a keyed request must actually reach the transport).
     it('createApp mounts /mcp only when ctx.mcp is wired, gated by the API key', async () => {
       const db = s.ctx.db;
+      const users = new UsersRepo(db);
+      const apiKeys = new ApiKeyRepo(db);
       const base: Omit<AppContext, 'mcp'> = {
         bridge: new ReadBridge({
           db,
@@ -170,8 +173,8 @@ describe('hosted MCP server (spec 061)', () => {
           freshnessSloSeconds: 86400,
         }),
         crosswalk: new Crosswalk(loadCrosswalk()),
-        users: new UsersRepo(db),
-        apiKeys: new ApiKeyRepo(db),
+        users,
+        apiKeys,
         health: () => ({ lastSyncedAt: null, isStale: true, defaultProvider: 'absent' }),
       };
       // Not wired → no /mcp route (404).
@@ -181,13 +184,27 @@ describe('hosted MCP server (spec 061)', () => {
         body: initBody,
       });
       expect(off.status).toBe(404);
-      // Wired → mounted + gated: anon is 401.
-      const on = await createApp({ ...base, mcp: s.ctx }).request('/mcp', {
+      // Wired → mounted + gated.
+      const app = createApp({ ...base, mcp: s.ctx });
+      const anon = await app.request('/mcp', {
         method: 'POST',
         headers: mcpHeaders({}),
         body: initBody,
       });
-      expect(on.status).toBe(401);
+      expect(anon.status).toBe(401);
+      // A read-scoped key passes the gate and reaches the mounted handler (the transport responds).
+      const owner = users.findOrCreateByKratosId({
+        kratosIdentityId: 'k9',
+        email: 'm@example.com',
+      });
+      const { plaintext } = apiKeys.create({ userId: owner.id, name: 'k' });
+      const keyed = await app.request('/mcp', {
+        method: 'POST',
+        headers: mcpHeaders({ authorization: `Bearer ${plaintext}` }),
+        body: initBody,
+      });
+      expect(keyed.status).not.toBe(401);
+      expect(keyed.status).toBeLessThan(500);
     });
   });
 });
