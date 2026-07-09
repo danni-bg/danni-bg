@@ -32,6 +32,7 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.81",
     "@ai-sdk/openai": "^3.0.68",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@ory/client": "^1.22.37",
     "ai": "^6.0.197",
     "d3-geo": "^3.1.1",

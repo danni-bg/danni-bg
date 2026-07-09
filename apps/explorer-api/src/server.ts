@@ -76,6 +76,9 @@ export function main(serve: ServeFn = Bun.serve): void {
   const storeRoot = resolve(process.cwd(), process.env.DANNI_STORE_ROOT ?? config.store.root);
   const db = openDb({ storeRoot, loadVec: false });
   const slo = config.store.freshnessSloSeconds;
+  // One embedder instance shared by the read bridge (query embedding) and the hosted MCP server
+  // (spec 061) so both semantic paths use the identical configured model.
+  const embedder = buildEmbedder(config.enrichment.embedder);
   const settings = new PlatformSettingsRepo(db);
   seedSettings(settings);
   const kratosUrl = process.env.KRATOS_PUBLIC_URL ?? 'http://localhost:14433';
@@ -83,9 +86,11 @@ export function main(serve: ServeFn = Bun.serve): void {
     bridge: new ReadBridge({
       db,
       storeRoot,
-      embedder: buildEmbedder(config.enrichment.embedder),
+      embedder,
       freshnessSloSeconds: slo,
     }),
+    // Hosted MCP (spec 061): the same read substrate the stdio `danni mcp` tools run against.
+    mcp: { db, storeRoot, embedder, freshnessSloSeconds: slo },
     crosswalk: new Crosswalk(loadCrosswalk()),
     health: () => buildHealth(db, slo, settings),
     readiness: () =>
