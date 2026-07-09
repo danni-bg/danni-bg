@@ -32,6 +32,28 @@ A read-only [Model Context Protocol](https://modelcontextprotocol.io) server ove
 
 (Equivalently, run the bin directly: `command: "/path/to/danni-bg/bin/danni"`, `args: ["mcp"]`.)
 
+### Hosted (remote) — `POST /mcp` (spec 061)
+
+The deployed explorer also serves MCP over the network at **`/mcp`** using the Streamable-HTTP
+transport, so an agent can reach the live mirror (with real semantic search) without a local store.
+Authenticate with a danni **API key** that has the `read` scope (create one under the account
+"API ключове" section); an anonymous request is `401`, a key without `read` is `403`.
+
+```jsonc
+// an MCP client that supports a remote Streamable-HTTP server + a bearer token
+{
+  "mcpServers": {
+    "danni-bg": {
+      "url": "https://<your-host>/mcp",
+      "headers": { "Authorization": "Bearer dnk_live_…" }
+    }
+  }
+}
+```
+
+Same four tools, same request/response shapes as the stdio server (it reuses the identical tool
+definitions) — only the transport differs. The tools are scoped to the API key's tenant.
+
 ### Tools
 
 | Tool | Arguments | Returns |

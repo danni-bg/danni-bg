@@ -8,6 +8,7 @@ import { Hono } from 'hono';
 import type { MiddlewareHandler } from 'hono';
 import type { Crosswalk } from '../../../packages/geo-boundaries/src/crosswalk.ts';
 import { MUNICIPALITIES, OBLASTS } from '../../../src/enrich/gazetteer/bg-admin.ts';
+import type { McpContext } from '../../../src/mcp/server.ts';
 import type { ApiKeyRepo } from '../../../src/store/repos/api-keys.ts';
 import type { ApiUsageRepo } from '../../../src/store/repos/api-usage.ts';
 import type { PlatformSettingsRepo } from '../../../src/store/repos/platform-settings.ts';
@@ -24,6 +25,7 @@ import { type ConversationStore, SessionStore } from './chat/session.ts';
 import type { PersistentSessionStore } from './chat/sessions-repo.ts';
 import { type DatasetLite, hasGeo, liteToPointer, matchesFiltersLite } from './dataset-lite.ts';
 import { expandGeoUnitIds } from './geo-rollup.ts';
+import { mcpHttpHandler } from './mcp/http.ts';
 import type { Metrics } from './metrics.ts';
 import { type ApiMeterConfig, chatMeter, dataApiGate } from './middleware/api-metering.ts';
 import {
@@ -97,6 +99,10 @@ export interface AppContext {
   generations?: GenerationManager;
   /** Platform settings repo — backs /api/admin/settings + the chat's default provider (spec 019). */
   settings?: PlatformSettingsRepo;
+  /** Hosted MCP server (spec 061) — when wired, /mcp exposes the read tools over Streamable HTTP,
+   *  gated by an API key with the `read` scope. Carries the read substrate the tools run against
+   *  (db/storeRoot/embedder/freshnessSloSeconds); the SAME `TOOLS` as the stdio `danni mcp`. */
+  mcp?: McpContext;
   /** Kratos public base URL (for the logout flow URL). */
   kratosPublicUrl?: string;
   /** Validate a Kratos session cookie directly (single-port mode, no Oathkeeper). When omitted, the
@@ -241,6 +247,16 @@ export function createApp(ctx: AppContext): Hono {
       ...(ctx.metrics ? { metrics: ctx.metrics } : {}),
     }),
   );
+
+  // Hosted MCP server (spec 061): the read tools over Streamable HTTP for LLM-agent consumers, behind
+  // an API key with the `read` scope (anon → 401 via the gate). app.all covers POST (JSON-RPC), GET
+  // (SSE stream) and DELETE (session teardown). Same TOOLS as the stdio `danni mcp` — transport only.
+  if (ctx.mcp) {
+    const mcp = mcpHttpHandler(ctx.mcp);
+    app.all('/mcp', gate as MiddlewareHandler, requireScope('read') as MiddlewareHandler, (c) =>
+      mcp(c),
+    );
+  }
 
   // Per-user self endpoints (spec 056 FR-393): mounted UNCONDITIONALLY — API-key management, chat
   // sessions, generation resume, and avatar do not depend on token metering being wired. `/usage`
