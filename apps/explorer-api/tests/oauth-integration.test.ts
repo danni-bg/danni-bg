@@ -45,6 +45,7 @@ function setup() {
     config: {
       issuer: ISSUER,
       resource: RESOURCE,
+      adminResource: `${ISSUER}/admin/mcp`,
       signingSecret: SECRET,
       accessTokenTtlSec: 3600,
       codeTtlSec: 60,
