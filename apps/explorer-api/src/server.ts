@@ -109,6 +109,7 @@ export function main(serve: ServeFn = Bun.serve): void {
           config: {
             issuer: oauthIssuer,
             resource: `${oauthIssuer}/mcp`,
+            adminResource: `${oauthIssuer}/admin/mcp`,
             signingSecret: new TextEncoder().encode(oauthSecret),
             accessTokenTtlSec: 3600,
             codeTtlSec: 60,

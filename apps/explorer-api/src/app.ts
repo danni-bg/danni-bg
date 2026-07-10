@@ -44,7 +44,12 @@ import {
   requireScope,
 } from './middleware/require-auth.ts';
 import { createAccessTokenVerifier } from './oauth/resource-server.ts';
-import { type OAuthRouterDeps, oauthRoutes } from './oauth/router.ts';
+import {
+  type OAuthRouterDeps,
+  knownResources,
+  oauthRoutes,
+  resourceMetadataUrl,
+} from './oauth/router.ts';
 import { clampInt } from './pagination.ts';
 import type { ReadBridge } from './read-bridge.ts';
 import type { ReadinessReport } from './readiness.ts';
@@ -237,11 +242,34 @@ export function createApp(ctx: AppContext): Hono {
     ? createAccessTokenVerifier({
         secret: ctx.oauth.config.signingSecret,
         issuer: ctx.oauth.config.issuer.replace(/\/$/, ''),
-        resource: ctx.oauth.config.resource,
+        // Accept a token bound to EITHER MCP resource (read `/mcp` or admin `/admin/mcp`, spec 062);
+        // which door it opens is decided by scope downstream, not the audience.
+        audiences: knownResources(ctx.oauth.config),
         revocations: ctx.oauth.revocations,
         users: ctx.oauth.users,
       })
     : undefined;
+
+  // RFC 9728 challenge: when a request to an MCP door is unauthenticated (401) or lacks the required
+  // scope (403), tell the client WHERE to discover this resource's metadata via `WWW-Authenticate`, so
+  // it learns the resource's required scope (`mcp:read` vs `mcp:admin`) and requests it. Without this
+  // an MCP client reuses whatever grant it already has — the reason a read grant can't open /admin/mcp.
+  const passthrough: MiddlewareHandler = async (_c, next) => {
+    await next();
+  };
+  const mcpChallenge = (metadataUrl: string | undefined): MiddlewareHandler => {
+    if (!metadataUrl) return passthrough; // OAuth not wired → no resource_metadata to advertise
+    const header = `Bearer resource_metadata="${metadataUrl}"`;
+    return async (c, next) => {
+      await next();
+      if (c.res.status === 401 || c.res.status === 403) {
+        // Rebuild the response so its (otherwise frozen) headers can carry the challenge.
+        const headers = new Headers(c.res.headers);
+        headers.set('WWW-Authenticate', header);
+        c.res = new Response(c.res.body, { status: c.res.status, headers });
+      }
+    };
+  };
 
   // The single auth composition point (spec 055 FR-375): built once from the canonical dep set and
   // handed to every gated router + the chat route, so each receives the identical argument set (and an
@@ -283,8 +311,15 @@ export function createApp(ctx: AppContext): Hono {
   // (SSE stream) and DELETE (session teardown). Same TOOLS as the stdio `danni mcp` — transport only.
   if (ctx.mcp) {
     const mcp = mcpHttpHandler(ctx.mcp);
-    app.all('/mcp', gate as MiddlewareHandler, requireScope('read') as MiddlewareHandler, (c) =>
-      mcp(c),
+    const challenge = mcpChallenge(
+      ctx.oauth ? resourceMetadataUrl(ctx.oauth.config, 'read') : undefined,
+    );
+    app.all(
+      '/mcp',
+      challenge,
+      gate as MiddlewareHandler,
+      requireScope('read') as MiddlewareHandler,
+      (c) => mcp(c),
     );
   }
 
@@ -294,8 +329,12 @@ export function createApp(ctx: AppContext): Hono {
   // role tier off the fresh principal.
   if (ctx.adminMcp) {
     const admin = adminMcpHandler(ctx.adminMcp);
+    const challenge = mcpChallenge(
+      ctx.oauth ? resourceMetadataUrl(ctx.oauth.config, 'admin') : undefined,
+    );
     app.all(
       '/admin/mcp',
+      challenge,
       gate as MiddlewareHandler,
       requireHuman as MiddlewareHandler,
       requireMcpAdminScope as MiddlewareHandler,

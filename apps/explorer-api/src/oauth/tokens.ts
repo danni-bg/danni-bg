@@ -57,8 +57,11 @@ export interface VerifiedAccessToken {
 export async function verifyAccessTokenJwt(
   token: string,
   secret: Uint8Array,
-  opts: { issuer: string; audience: string; now?: number },
+  opts: { issuer: string; audience: string | string[]; now?: number },
 ): Promise<VerifiedAccessToken> {
+  // `audience` may be a SET of acceptable resources (spec 062): danni serves both the read (`/mcp`)
+  // and admin (`/admin/mcp`) MCP resources, and a token bound to any of them verifies here. jose
+  // accepts a `string[]` and matches if the token's `aud` is any member.
   const { payload } = await jwtVerify(token, secret, {
     algorithms: [ALG],
     issuer: opts.issuer,
@@ -69,12 +72,14 @@ export async function verifyAccessTokenJwt(
   if (!payload.jti) throw new Error('token missing jti');
   if (typeof payload.exp !== 'number') throw new Error('token missing exp');
   const scope = typeof payload.scope === 'string' ? payload.scope.split(' ').filter(Boolean) : [];
+  // Report the token's ACTUAL audience (we always mint a single-string `aud`), not the accepted set.
+  const aud = typeof payload.aud === 'string' ? payload.aud : (payload.aud?.[0] ?? '');
   return {
     sub: payload.sub,
     scope,
     jti: payload.jti,
     clientId: typeof payload.client_id === 'string' ? payload.client_id : '',
-    aud: opts.audience,
+    aud,
     exp: payload.exp,
   };
 }

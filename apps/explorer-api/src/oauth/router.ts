@@ -19,12 +19,26 @@ import { signAccessToken } from './tokens.ts';
 
 export interface OAuthConfig {
   issuer: string; // AS base URL / origin, e.g. https://host (no trailing slash required)
-  resource: string; // the MCP resource URI (RFC 8707 audience), e.g. https://host/mcp
+  resource: string; // the READ MCP resource URI (RFC 8707 audience), e.g. https://host/mcp
+  adminResource: string; // the ADMIN MCP resource URI, e.g. https://host/admin/mcp (spec 062)
   signingSecret: Uint8Array;
   accessTokenTtlSec: number;
   codeTtlSec: number;
   loginPath: string; // SPA login route, e.g. /auth/login
   scopesSupported: string[]; // e.g. ['mcp:read','mcp:admin']
+}
+
+/** The RFC-8707 resources this AS can bind a token to — the read + admin MCP endpoints (spec 062). */
+export function knownResources(cfg: OAuthConfig): string[] {
+  return [cfg.resource, cfg.adminResource];
+}
+
+/** The RFC-9728 protected-resource-metadata URL for a door — used in the `WWW-Authenticate` challenge. */
+export function resourceMetadataUrl(cfg: OAuthConfig, kind: 'read' | 'admin'): string {
+  const b = cfg.issuer.replace(/\/$/, '');
+  return kind === 'admin'
+    ? `${b}/.well-known/oauth-protected-resource/admin/mcp`
+    : `${b}/.well-known/oauth-protected-resource/mcp`;
 }
 
 export interface OAuthRouterDeps {
@@ -55,11 +69,18 @@ export function authServerMetadata(cfg: OAuthConfig) {
   };
 }
 
-export function protectedResourceMetadata(cfg: OAuthConfig) {
+/**
+ * RFC 9728 protected-resource metadata. Each MCP door is a distinct protected resource with its OWN
+ * required scope, so a client that discovers it requests the right scope (spec 062): the read `/mcp`
+ * door advertises `mcp:read`, the admin `/admin/mcp` door advertises `mcp:admin`. This is what makes an
+ * MCP client escalate to `mcp:admin` for the admin server instead of reusing its read grant.
+ */
+export function protectedResourceMetadata(cfg: OAuthConfig, kind: 'read' | 'admin' = 'read') {
+  const admin = kind === 'admin';
   return {
-    resource: cfg.resource,
+    resource: admin ? cfg.adminResource : cfg.resource,
     authorization_servers: [base(cfg.issuer)],
-    scopes_supported: cfg.scopesSupported,
+    scopes_supported: [admin ? 'mcp:admin' : 'mcp:read'],
     bearer_methods_supported: ['header'],
   };
 }
@@ -110,6 +131,7 @@ type AuthorizeResolution =
       codeChallenge: string;
       scope: string;
       state: string;
+      resource: string; // the effective RFC-8707 audience the token will be bound to
     };
 
 /** Validate the authorize request up to (not including) authentication. Shared by GET + the consent POST. */
@@ -127,7 +149,10 @@ export function resolveAuthorize(deps: OAuthRouterDeps, p: AuthorizeParams): Aut
   });
   if (p.responseType !== 'code') return err('unsupported_response_type');
   if (p.codeChallengeMethod !== 'S256' || !p.codeChallenge) return err('invalid_request');
-  if (p.resource && p.resource !== deps.config.resource) return err('invalid_target');
+  // RFC 8707: the requested resource must be one this AS serves (read or admin MCP). Absent → the
+  // read resource (back-compat default). The token is bound to this exact audience.
+  if (p.resource && !knownResources(deps.config).includes(p.resource)) return err('invalid_target');
+  const resource = p.resource || deps.config.resource;
   const requested = p.scope ? p.scope.split(' ').filter(Boolean) : ['mcp:read'];
   if (!requested.every((s) => deps.config.scopesSupported.includes(s))) return err('invalid_scope');
   return {
@@ -137,6 +162,7 @@ export function resolveAuthorize(deps: OAuthRouterDeps, p: AuthorizeParams): Aut
     codeChallenge: p.codeChallenge,
     scope: requested.join(' '),
     state: p.state,
+    resource,
   };
 }
 
@@ -246,8 +272,15 @@ export function oauthRoutes(deps: OAuthRouterDeps): Hono {
   app.get('/.well-known/oauth-authorization-server', (c) =>
     c.json(authServerMetadata(deps.config)),
   );
-  app.get('/.well-known/oauth-protected-resource', (c) =>
-    c.json(protectedResourceMetadata(deps.config)),
+  // Read MCP (`/mcp`) protected-resource metadata: the bare well-known path + the RFC 9728 path-based
+  // variant (`/.well-known/oauth-protected-resource/mcp`) that a client derives from the resource URL.
+  const readPrm = (c: Context) => c.json(protectedResourceMetadata(deps.config, 'read'));
+  app.get('/.well-known/oauth-protected-resource', readPrm);
+  app.get('/.well-known/oauth-protected-resource/mcp', readPrm);
+  // Admin MCP (`/admin/mcp`) protected-resource metadata (spec 062) — advertises `mcp:admin`, so a
+  // client connecting to the admin door requests that scope instead of reusing a read grant.
+  app.get('/.well-known/oauth-protected-resource/admin/mcp', (c) =>
+    c.json(protectedResourceMetadata(deps.config, 'admin')),
   );
 
   // Dynamic Client Registration (RFC 7591).
@@ -301,7 +334,7 @@ export function oauthRoutes(deps: OAuthRouterDeps): Hono {
       redirectUri: r.redirectUri,
       codeChallenge: r.codeChallenge,
       scope: r.scope,
-      resource: deps.config.resource,
+      resource: r.resource, // the requested audience (read or admin MCP), bound into the token below
       ttlSec: deps.config.codeTtlSec,
       now: now(),
     });
@@ -381,7 +414,14 @@ export function oauthRoutes(deps: OAuthRouterDeps): Hono {
       return c.json({ error: 'invalid_grant', error_description: 'PKCE verification failed' }, 400);
     }
     const { token, expiresInSec } = await signAccessToken(
-      { userId: code.userId, scope: code.scope ?? '', audience: deps.config.resource, clientId },
+      {
+        userId: code.userId,
+        scope: code.scope ?? '',
+        // Bind the token to the resource the code was issued for (read or admin MCP), falling back to
+        // the read resource for codes issued before the field existed.
+        audience: code.resource ?? deps.config.resource,
+        clientId,
+      },
       deps.config.signingSecret,
       {
         issuer: base(deps.config.issuer),

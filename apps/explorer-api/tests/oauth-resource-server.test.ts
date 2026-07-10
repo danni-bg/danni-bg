@@ -24,7 +24,7 @@ function setup() {
   const verify = createAccessTokenVerifier({
     secret: SECRET,
     issuer: ISSUER,
-    resource: RESOURCE,
+    audiences: [RESOURCE, `${ISSUER}/admin/mcp`],
     revocations,
     users,
   });

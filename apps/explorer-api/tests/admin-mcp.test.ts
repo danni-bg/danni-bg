@@ -219,6 +219,7 @@ describe('admin MCP (spec 062)', () => {
         config: {
           issuer: 'https://host',
           resource: RESOURCE,
+          adminResource: 'https://host/admin/mcp',
           signingSecret: SECRET,
           accessTokenTtlSec: 3600,
           codeTtlSec: 60,
@@ -287,11 +288,17 @@ describe('admin MCP (spec 062)', () => {
           })
         ).status,
       ).toBe(403);
-      // anon → 401
-      expect(
-        (await a.request('/admin/mcp', { method: 'POST', headers: headers({}), body: initBody }))
-          .status,
-      ).toBe(401);
+      // anon → 401, and the RFC 9728 challenge points at the ADMIN resource metadata (so a client
+      // learns it must request mcp:admin instead of reusing a read grant) — the spec-062 fix
+      const anon = await a.request('/admin/mcp', {
+        method: 'POST',
+        headers: headers({}),
+        body: initBody,
+      });
+      expect(anon.status).toBe(401);
+      expect(anon.headers.get('WWW-Authenticate')).toBe(
+        'Bearer resource_metadata="https://host/.well-known/oauth-protected-resource/admin/mcp"',
+      );
       // OAuth mcp:admin → reaches the transport
       const ok = await a.request('/admin/mcp', {
         method: 'POST',

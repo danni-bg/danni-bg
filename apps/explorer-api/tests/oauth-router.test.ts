@@ -14,7 +14,13 @@ import {
 import { UsersRepo } from '../../../src/store/repos/users.ts';
 import type { ResolvedIdentity, SessionResolver } from '../src/auth/kratos-session.ts';
 import { s256Challenge } from '../src/oauth/pkce.ts';
-import { type OAuthConfig, oauthRoutes, scopeRows } from '../src/oauth/router.ts';
+import {
+  type OAuthConfig,
+  knownResources,
+  oauthRoutes,
+  resourceMetadataUrl,
+  scopeRows,
+} from '../src/oauth/router.ts';
 
 const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const SECRET = new TextEncoder().encode('router-secret-0123456789');
@@ -41,6 +47,7 @@ function setup() {
   const config: OAuthConfig = {
     issuer: 'https://host',
     resource: 'https://host/mcp',
+    adminResource: 'https://host/admin/mcp',
     signingSecret: SECRET,
     accessTokenTtlSec: 3600,
     codeTtlSec: 60,
@@ -103,6 +110,45 @@ describe('OAuth AS endpoints (spec 063)', () => {
       const m = await bodyOf(await s.app.request('/.well-known/oauth-protected-resource'));
       expect(m.resource).toBe('https://host/mcp');
       expect(m.authorization_servers).toEqual(['https://host']);
+    });
+
+    it('serves per-door protected-resource metadata (read vs admin) with door-specific scope', async () => {
+      // read door (bare + RFC 9728 path-based variant) → mcp:read
+      for (const path of [
+        '/.well-known/oauth-protected-resource',
+        '/.well-known/oauth-protected-resource/mcp',
+      ]) {
+        const m = await bodyOf(await s.app.request(path));
+        expect(m.resource).toBe('https://host/mcp');
+        expect(m.scopes_supported).toEqual(['mcp:read']);
+      }
+      // admin door → its own resource + mcp:admin (spec 062: this is what makes a client escalate)
+      const a = await bodyOf(
+        await s.app.request('/.well-known/oauth-protected-resource/admin/mcp'),
+      );
+      expect(a.resource).toBe('https://host/admin/mcp');
+      expect(a.scopes_supported).toEqual(['mcp:admin']);
+      expect(a.authorization_servers).toEqual(['https://host']);
+    });
+
+    it('exposes the known resources + their metadata URLs', () => {
+      const cfg: OAuthConfig = {
+        issuer: 'https://host',
+        resource: 'https://host/mcp',
+        adminResource: 'https://host/admin/mcp',
+        signingSecret: SECRET,
+        accessTokenTtlSec: 3600,
+        codeTtlSec: 60,
+        loginPath: '/auth/login',
+        scopesSupported: ['mcp:read', 'mcp:admin'],
+      };
+      expect(knownResources(cfg)).toEqual(['https://host/mcp', 'https://host/admin/mcp']);
+      expect(resourceMetadataUrl(cfg, 'read')).toBe(
+        'https://host/.well-known/oauth-protected-resource/mcp',
+      );
+      expect(resourceMetadataUrl(cfg, 'admin')).toBe(
+        'https://host/.well-known/oauth-protected-resource/admin/mcp',
+      );
     });
   });
 
@@ -321,6 +367,43 @@ describe('OAuth AS endpoints (spec 063)', () => {
       expect(b.access_token).toBeString();
       expect(b.expires_in).toBe(3600);
       expect(b.scope).toBe('mcp:read');
+    });
+
+    it('binds the token to the requested admin resource + scope (RFC 8707, spec 062)', async () => {
+      const c = s.clients.register({ redirectUris: [REDIRECT], firstParty: true }).client;
+      // authorize for the ADMIN resource with the mcp:admin scope (what a client discovers via the
+      // admin door's protected-resource metadata) — must be accepted, not invalid_target.
+      const authz = await s.app.request(
+        `/oauth/authorize?${await authorizeQuery({
+          client_id: c.id,
+          resource: 'https://host/admin/mcp',
+          scope: 'mcp:admin',
+        })}`,
+        { headers: { cookie: 'ok' } },
+      );
+      expect(authz.status).toBe(302);
+      const code = new URL(authz.headers.get('location') as string).searchParams.get(
+        'code',
+      ) as string;
+      const b = await bodyOf(
+        await s.app.request(
+          '/oauth/token',
+          form({
+            grant_type: 'authorization_code',
+            code,
+            redirect_uri: REDIRECT,
+            client_id: c.id,
+            code_verifier: VERIFIER,
+          }),
+        ),
+      );
+      expect(b.scope).toBe('mcp:admin');
+      // the JWT is bound to the admin resource, so the RS accepts it at /admin/mcp
+      const payload = JSON.parse(
+        Buffer.from((b.access_token as string).split('.')[1] as string, 'base64url').toString(),
+      );
+      expect(payload.aud).toBe('https://host/admin/mcp');
+      expect(payload.scope).toBe('mcp:admin');
     });
 
     it('rejects a bad grant_type, unknown client, bad PKCE, code reuse, and mismatches', async () => {

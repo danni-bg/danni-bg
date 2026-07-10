@@ -18,7 +18,10 @@ export interface OAuthPrincipal {
 export interface AccessTokenVerifierDeps {
   secret: Uint8Array;
   issuer: string;
-  resource: string; // the MCP resource URI this server is (RFC 8707 audience)
+  // The MCP resource URIs this server serves (RFC 8707 audiences) — the read `/mcp` and admin
+  // `/admin/mcp` resources. A token bound to ANY of them verifies; which door it may actually open is
+  // then decided by SCOPE (`requireScope('read')` vs `requireMcpAdminScope`), not the audience.
+  audiences: string[];
   revocations: OAuthRevocationsRepo;
   users: UsersRepo;
 }
@@ -31,7 +34,7 @@ export function createAccessTokenVerifier(deps: AccessTokenVerifierDeps): Access
     try {
       claims = await verifyAccessTokenJwt(token, deps.secret, {
         issuer: deps.issuer,
-        audience: deps.resource,
+        audience: deps.audiences,
         ...(now !== undefined ? { now } : {}),
       });
     } catch {
