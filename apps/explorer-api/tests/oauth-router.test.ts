@@ -14,7 +14,7 @@ import {
 import { UsersRepo } from '../../../src/store/repos/users.ts';
 import type { ResolvedIdentity, SessionResolver } from '../src/auth/kratos-session.ts';
 import { s256Challenge } from '../src/oauth/pkce.ts';
-import { type OAuthConfig, oauthRoutes } from '../src/oauth/router.ts';
+import { type OAuthConfig, oauthRoutes, scopeRows } from '../src/oauth/router.ts';
 
 const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const SECRET = new TextEncoder().encode('router-secret-0123456789');
@@ -219,7 +219,22 @@ describe('OAuth AS endpoints (spec 063)', () => {
         { headers: { cookie: 'ok' } },
       );
       expect(res.status).toBe(200);
-      expect(await res.text()).toContain('Approve');
+      const html = await res.text();
+      // The redesigned consent page: branded shell + human-readable (Bulgarian) scope copy + client name.
+      expect(html).toContain('Разреши'); // Approve
+      expect(html).toContain('Откажи'); // Deny
+      expect(html).toContain('Достъп за четене'); // mcp:read described, not a raw scope string
+      expect(html).toContain(c.id); // the client identity is rendered (no clientName → falls back to id)
+    });
+
+    it('scopeRows renders described scopes and falls back to the raw code for unknown ones', () => {
+      const known = scopeRows('mcp:read mcp:admin');
+      expect(known).toContain('Достъп за четене'); // mcp:read
+      expect(known).toContain('Администриране'); // mcp:admin
+      // an undescribed (but config-supported) scope still renders sanely — the raw code, no crash
+      const unknown = scopeRows('mcp:future');
+      expect(unknown).toContain('mcp:future');
+      expect(unknown).not.toContain('Достъп за четене');
     });
 
     it('consent POST: approve issues a code, deny returns access_denied, anon 401, bad params surface', async () => {

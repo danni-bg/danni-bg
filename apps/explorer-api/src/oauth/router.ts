@@ -146,20 +146,89 @@ function redirectWith(redirectUri: string, params: Record<string, string>): stri
   return u.toString();
 }
 
+/** Human-readable copy for each grantable scope, shown on the consent screen. */
+const SCOPE_COPY: Record<string, { title: string; detail: string }> = {
+  'mcp:read': {
+    title: 'Достъп за четене',
+    detail: 'Търсене и четене на публичното огледало на данни — набори от данни, ресурси и обекти.',
+  },
+  'mcp:admin': {
+    title: 'Администриране',
+    detail:
+      'Управление на API ключове, организации, членове и настройки и четене на одитния дневник — ограничено до това, което ролята ви вече позволява.',
+  },
+};
+
+export function scopeRows(scope: string): string {
+  const scopes = scope.split(/\s+/).filter(Boolean);
+  return scopes
+    .map((s) => {
+      const copy = SCOPE_COPY[s];
+      const title = copy ? escapeHtml(copy.title) : `<code>${escapeHtml(s)}</code>`;
+      const detail = copy ? `<span class="scope-detail">${escapeHtml(copy.detail)}</span>` : '';
+      return `<li class="scope"><span class="scope-check" aria-hidden="true">✓</span><span class="scope-text"><span class="scope-title">${title} <code>${escapeHtml(s)}</code></span>${detail}</span></li>`;
+    })
+    .join('');
+}
+
 function consentPage(clientName: string, scope: string, params: AuthorizeParams): string {
   const hidden = (name: string, value: string) =>
     `<input type="hidden" name="${name}" value="${escapeHtml(value)}">`;
-  return `<!doctype html><meta charset="utf-8"><title>Authorize</title>
-<body style="font-family:system-ui;max-width:32rem;margin:4rem auto">
-<h2>Authorize ${escapeHtml(clientName)}</h2>
-<p>grants scope <code>${escapeHtml(scope)}</code> to act on your behalf.</p>
+  const name = escapeHtml(clientName);
+  return `<!doctype html><html lang="bg"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Оторизиране на ${name} · danni</title>
+<style>
+:root{color-scheme:light dark;--bg:#f8fafc;--card:#ffffff;--fg:#0f172a;--muted:#64748b;--line:#e2e8f0;--accent:#1d4ed8;--accent-fg:#f8fafc;--chip:#f1f5f9;--danger:#dc2626}
+@media (prefers-color-scheme:dark){:root{--bg:#020617;--card:#0f172a;--fg:#e2e8f0;--muted:#94a3b8;--line:#1e293b;--accent:#3b82f6;--accent-fg:#f8fafc;--chip:#1e293b;--danger:#f87171}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.5rem;
+background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.card{width:100%;max-width:26rem;background:var(--card);border:1px solid var(--line);border-radius:16px;
+padding:1.75rem;box-shadow:0 1px 2px rgba(0,0,0,.04),0 12px 32px -12px rgba(0,0,0,.18)}
+.brand{display:flex;align-items:center;gap:.5rem;font-weight:600;letter-spacing:.02em;margin-bottom:1.25rem}
+.brand .dot{width:.65rem;height:.65rem;border-radius:50%;background:var(--accent)}
+.brand .sub{color:var(--muted);font-weight:400}
+h1{font-size:1.3rem;line-height:1.3;margin:0 0 .35rem}
+h1 b{color:var(--accent)}
+.lede{color:var(--muted);margin:0 0 1.25rem}
+.scopes{list-style:none;margin:0 0 1.25rem;padding:.5rem .25rem;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.scope{display:flex;gap:.7rem;padding:.6rem .25rem;align-items:flex-start}
+.scope-check{flex:0 0 auto;width:1.35rem;height:1.35rem;border-radius:50%;background:var(--accent);color:var(--accent-fg);
+display:grid;place-items:center;font-size:.8rem;margin-top:.1rem}
+.scope-text{display:flex;flex-direction:column;gap:.15rem}
+.scope-title{font-weight:600}
+.scope-detail{color:var(--muted);font-size:.9rem}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82em;background:var(--chip);
+padding:.1rem .35rem;border-radius:6px;color:var(--muted);font-weight:500}
+.actions{display:flex;gap:.6rem;margin-top:.25rem}
+button{flex:1;font:inherit;font-weight:600;padding:.7rem 1rem;border-radius:10px;cursor:pointer;border:1px solid transparent;transition:filter .12s,background .12s}
+button:hover{filter:brightness(1.05)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.approve{background:var(--accent);color:var(--accent-fg)}
+.deny{background:transparent;color:var(--muted);border-color:var(--line)}
+.deny:hover{color:var(--danger);border-color:var(--danger);filter:none}
+.note{margin:1.25rem 0 0;font-size:.82rem;color:var(--muted);line-height:1.5}
+</style></head>
+<body>
+<main class="card">
+<div class="brand"><span class="dot"></span>danni<span class="sub">· оторизация</span></div>
+<h1>Оторизиране на <b>${name}</b></h1>
+<p class="lede">${name} иска достъп до danni от ваше име. Ще получи:</p>
+<ul class="scopes">${scopeRows(scope)}</ul>
 <form method="post" action="/oauth/authorize">
 ${hidden('response_type', params.responseType)}${hidden('client_id', params.clientId)}${hidden('redirect_uri', params.redirectUri)}
 ${hidden('code_challenge', params.codeChallenge)}${hidden('code_challenge_method', params.codeChallengeMethod)}
 ${hidden('scope', params.scope)}${hidden('state', params.state)}${hidden('resource', params.resource)}
-<button name="decision" value="approve">Approve</button>
-<button name="decision" value="deny">Deny</button>
-</form></body>`;
+<div class="actions">
+<button type="submit" class="approve" name="decision" value="approve">Разреши</button>
+<button type="submit" class="deny" name="decision" value="deny">Откажи</button>
+</div>
+</form>
+<p class="note">Разрешете само ако току-що сте инициирали това от ${name}. Достъпът е ограничен до посочения обхват и можете да го отмените по всяко време.</p>
+</main>
+</body></html>`;
 }
 
 function escapeHtml(s: string): string {
