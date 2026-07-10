@@ -63,8 +63,8 @@ definitions) — only the transport differs. The tools are scoped to the API key
   (`/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource`) and the
   authorization-code + PKCE flow at `/oauth/{authorize,token,register,revoke}`. An MCP client that
   supports remote OAuth discovers these automatically; the human logs in via the existing session and
-  the client receives a short-lived Bearer token (scope `mcp:read`). This is the required auth for the
-  forthcoming admin MCP (spec 062), where a machine key is not accepted.
+  the client receives a short-lived Bearer token (scope `mcp:read`, or `mcp:admin` for the admin MCP
+  below). This is the required auth for the admin MCP (spec 062), where a machine key is not accepted.
 
 ### Tools
 
@@ -90,6 +90,28 @@ shape returns `isError: true`, not a crash.
 
 > The semantic half of `mirror_search` is only as good as the configured embedder — wire a real one
 > (see [`semantic-search.md`](./semantic-search.md)); otherwise only the keyword leg is meaningful.
+
+### Admin MCP — `POST /admin/mcp` (spec 062)
+
+The management counterpart to the read `/mcp`: a thin, role-guarded projection of the same admin
+surface the web console uses (manage your API keys, your org's members/settings, and — for a
+super-admin — tenants, user roles, key quotas, and the audit trail). It is **human-delegated only** —
+a machine `dnk_live_…` API key is rejected (403); reach it with a **user-delegated OAuth token
+carrying the `mcp:admin` scope** (the same discovery/PKCE flow as `/mcp`, above). The caller's role +
+active org are resolved *fresh per request*, so tools are **tier-filtered**: `tools/list` shows only
+the tools the caller may run.
+
+| Tier | Tools |
+|---|---|
+| Any signed-in human | `list_my_api_keys`, `create_api_key` `{name, scopes?}`, `revoke_api_key` `{keyId, confirm}` |
+| Org owner/admin (active org) | `list_members`, `get_tenant_settings`, `set_tenant_settings` `{llm?, toggles?}` |
+| Super-admin (app role `admin`) | `list_tenants` `{limit?, offset?}`, `set_user_role` `{email, role, confirm}`, `set_api_key_quota` `{keyId, limit}`, `list_audit` `{limit?, offset?}` |
+
+Destructive tools (`revoke_api_key`, `set_user_role`) require an explicit `confirm: true` — a call
+without it returns `isError: true` and makes no change. `create_api_key` returns the plaintext secret
+**once**. Every mutation is written to the audit trail (`list_audit`, super-admin) with actor, action,
+target, and outcome (`ok`/`error`). Calling a tool above your tier returns `isError: true`
+(`unknown or unauthorized tool`), never a silent escalation.
 
 ## 2. Directly off disk
 

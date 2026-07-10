@@ -25,6 +25,7 @@ import { type ConversationStore, SessionStore } from './chat/session.ts';
 import type { PersistentSessionStore } from './chat/sessions-repo.ts';
 import { type DatasetLite, hasGeo, liteToPointer, matchesFiltersLite } from './dataset-lite.ts';
 import { expandGeoUnitIds } from './geo-rollup.ts';
+import { type AdminMcpDeps, adminMcpHandler } from './mcp/admin.ts';
 import { mcpHttpHandler } from './mcp/http.ts';
 import type { Metrics } from './metrics.ts';
 import { type ApiMeterConfig, chatMeter, dataApiGate } from './middleware/api-metering.ts';
@@ -36,7 +37,12 @@ import {
 import { RateLimiter } from './middleware/rate-limiter.ts';
 import { requestId } from './middleware/request-id.ts';
 import { requestLog } from './middleware/request-log.ts';
-import { authGate, requireScope } from './middleware/require-auth.ts';
+import {
+  authGate,
+  requireHuman,
+  requireMcpAdminScope,
+  requireScope,
+} from './middleware/require-auth.ts';
 import { createAccessTokenVerifier } from './oauth/resource-server.ts';
 import { type OAuthRouterDeps, oauthRoutes } from './oauth/router.ts';
 import { clampInt } from './pagination.ts';
@@ -108,6 +114,10 @@ export interface AppContext {
   /** OAuth 2.1 AS + RS for MCP (spec 063) — when wired, mounts the public /.well-known + /oauth/*
    *  endpoints and lets a user-delegated Bearer JWT authenticate on gated routes (incl. /mcp). */
   oauth?: OAuthRouterDeps;
+  /** Admin MCP server (spec 062) — when wired, /admin/mcp exposes the tiered management tools
+   *  (keys/tenants/members/settings), human-delegated only (rejects API keys), with per-tool role
+   *  guards + audited, confirm-gated mutations. */
+  adminMcp?: AdminMcpDeps;
   /** Kratos public base URL (for the logout flow URL). */
   kratosPublicUrl?: string;
   /** Validate a Kratos session cookie directly (single-port mode, no Oathkeeper). When omitted, the
@@ -275,6 +285,21 @@ export function createApp(ctx: AppContext): Hono {
     const mcp = mcpHttpHandler(ctx.mcp);
     app.all('/mcp', gate as MiddlewareHandler, requireScope('read') as MiddlewareHandler, (c) =>
       mcp(c),
+    );
+  }
+
+  // Admin MCP server (spec 062): the tiered management tools, HUMAN-DELEGATED only — gate authenticates,
+  // requireHuman rejects API keys (a machine key can never manage keys/tenants), requireMcpAdminScope
+  // requires the consented mcp:admin capability for OAuth callers. The tools then enforce the actual
+  // role tier off the fresh principal.
+  if (ctx.adminMcp) {
+    const admin = adminMcpHandler(ctx.adminMcp);
+    app.all(
+      '/admin/mcp',
+      gate as MiddlewareHandler,
+      requireHuman as MiddlewareHandler,
+      requireMcpAdminScope as MiddlewareHandler,
+      (c) => admin(c as unknown as Parameters<typeof admin>[0]),
     );
   }
 
