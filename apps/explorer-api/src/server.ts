@@ -12,6 +12,11 @@ import { isStale } from '../../../src/lib/time.ts';
 import { openDb } from '../../../src/store/db.ts';
 import { ApiKeyRepo } from '../../../src/store/repos/api-keys.ts';
 import { ApiUsageRepo } from '../../../src/store/repos/api-usage.ts';
+import {
+  OAuthClientsRepo,
+  OAuthCodesRepo,
+  OAuthRevocationsRepo,
+} from '../../../src/store/repos/oauth.ts';
 import { PlatformSettingsRepo } from '../../../src/store/repos/platform-settings.ts';
 import { TenantsRepo } from '../../../src/store/repos/tenants.ts';
 import { TokenUsageRepo } from '../../../src/store/repos/token-usage.ts';
@@ -82,6 +87,32 @@ export function main(serve: ServeFn = Bun.serve): void {
   const settings = new PlatformSettingsRepo(db);
   seedSettings(settings);
   const kratosUrl = process.env.KRATOS_PUBLIC_URL ?? 'http://localhost:14433';
+  const users = new UsersRepo(db);
+  const sessionResolver = kratosSessionResolver(kratosUrl);
+  // OAuth AS + RS for MCP (spec 063) — enabled when the operator sets OAUTH_ISSUER (the app's public
+  // origin) + OAUTH_SIGNING_SECRET. Else MCP stays API-key-only (spec 061). Reuses the users repo +
+  // Kratos session resolver so the authorize step authenticates via the existing session.
+  const oauthIssuer = process.env.OAUTH_ISSUER?.replace(/\/$/, '');
+  const oauthSecret = process.env.OAUTH_SIGNING_SECRET;
+  const oauth =
+    oauthIssuer && oauthSecret
+      ? {
+          clients: new OAuthClientsRepo(db),
+          codes: new OAuthCodesRepo(db),
+          revocations: new OAuthRevocationsRepo(db),
+          users,
+          sessionResolver,
+          config: {
+            issuer: oauthIssuer,
+            resource: `${oauthIssuer}/mcp`,
+            signingSecret: new TextEncoder().encode(oauthSecret),
+            accessTokenTtlSec: 3600,
+            codeTtlSec: 60,
+            loginPath: '/auth/login',
+            scopesSupported: ['mcp:read', 'mcp:admin'],
+          },
+        }
+      : undefined;
   const ctx: AppContext = {
     bridge: new ReadBridge({
       db,
@@ -101,7 +132,8 @@ export function main(serve: ServeFn = Bun.serve): void {
         env: process.env,
       }),
     metrics: new Metrics(),
-    users: new UsersRepo(db),
+    users,
+    ...(oauth ? { oauth } : {}),
     apiKeys: new ApiKeyRepo(db),
     apiUsage: new ApiUsageRepo(db),
     tokenUsage: new TokenUsageRepo(db),
@@ -112,7 +144,7 @@ export function main(serve: ServeFn = Bun.serve): void {
     // Single-port mode: validate the Kratos session ourselves so the app works without Oathkeeper
     // in front. Inbound X-User-* headers are IGNORED unless the operator opts in with
     // TRUST_PROXY_AUTH_HEADERS (spec 034) — anyone can set them on a directly-exposed port.
-    sessionResolver: kratosSessionResolver(kratosUrl),
+    sessionResolver,
   };
   const app = createApp(ctx);
   // Reverse-proxy Kratos on the same origin so the SPA's self-service flows + whoami work without a

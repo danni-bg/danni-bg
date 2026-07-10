@@ -73,6 +73,8 @@ describe('main()', () => {
   const savedStore = process.env.DANNI_STORE_ROOT;
   const savedPort = process.env.EXPLORER_API_PORT;
   const savedConfig = process.env.DANNI_CONFIG;
+  const savedOauthIssuer = process.env.OAUTH_ISSUER;
+  const savedOauthSecret = process.env.OAUTH_SIGNING_SECRET;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'danni-main-'));
@@ -93,6 +95,30 @@ describe('main()', () => {
     else process.env.EXPLORER_API_PORT = savedPort;
     if (savedConfig === undefined) delete process.env.DANNI_CONFIG;
     else process.env.DANNI_CONFIG = savedConfig;
+    for (const [k, v] of [
+      ['OAUTH_ISSUER', savedOauthIssuer],
+      ['OAUTH_SIGNING_SECRET', savedOauthSecret],
+    ] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  it('wires the OAuth AS when OAUTH_ISSUER + OAUTH_SIGNING_SECRET are set', async () => {
+    process.env.OAUTH_ISSUER = 'https://danni.example';
+    process.env.OAUTH_SIGNING_SECRET = 'a-signing-secret-for-the-test';
+    let captured: ServeOptions | undefined;
+    main((opts) => {
+      captured = opts;
+      return undefined;
+    });
+    const res = await captured?.fetch(
+      new Request('http://localhost/.well-known/oauth-authorization-server'),
+    );
+    expect(res?.status).toBe(200);
+    const meta = (await res?.json()) as { issuer: string; token_endpoint: string };
+    expect(meta.issuer).toBe('https://danni.example');
+    expect(meta.token_endpoint).toBe('https://danni.example/oauth/token');
   });
 
   it('wires the app and passes serve options (default port) without binding a socket', async () => {

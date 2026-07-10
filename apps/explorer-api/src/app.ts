@@ -37,6 +37,8 @@ import { RateLimiter } from './middleware/rate-limiter.ts';
 import { requestId } from './middleware/request-id.ts';
 import { requestLog } from './middleware/request-log.ts';
 import { authGate, requireScope } from './middleware/require-auth.ts';
+import { createAccessTokenVerifier } from './oauth/resource-server.ts';
+import { type OAuthRouterDeps, oauthRoutes } from './oauth/router.ts';
 import { clampInt } from './pagination.ts';
 import type { ReadBridge } from './read-bridge.ts';
 import type { ReadinessReport } from './readiness.ts';
@@ -103,6 +105,9 @@ export interface AppContext {
    *  gated by an API key with the `read` scope. Carries the read substrate the tools run against
    *  (db/storeRoot/embedder/freshnessSloSeconds); the SAME `TOOLS` as the stdio `danni mcp`. */
   mcp?: McpContext;
+  /** OAuth 2.1 AS + RS for MCP (spec 063) — when wired, mounts the public /.well-known + /oauth/*
+   *  endpoints and lets a user-delegated Bearer JWT authenticate on gated routes (incl. /mcp). */
+  oauth?: OAuthRouterDeps;
   /** Kratos public base URL (for the logout flow URL). */
   kratosPublicUrl?: string;
   /** Validate a Kratos session cookie directly (single-port mode, no Oathkeeper). When omitted, the
@@ -214,6 +219,20 @@ export function createApp(ctx: AppContext): Hono {
     }
   }
 
+  // OAuth 2.1 AS + RS for MCP (spec 063): mount the PUBLIC discovery + flow endpoints, and derive the
+  // access-token verifier (RS) from the same config/repos so a user-delegated Bearer JWT authenticates
+  // on gated routes. Mounted before the gate — /.well-known + /oauth/* do their own (session) auth.
+  if (ctx.oauth) app.route('/', oauthRoutes(ctx.oauth));
+  const oauthVerifier = ctx.oauth
+    ? createAccessTokenVerifier({
+        secret: ctx.oauth.config.signingSecret,
+        issuer: ctx.oauth.config.issuer.replace(/\/$/, ''),
+        resource: ctx.oauth.config.resource,
+        revocations: ctx.oauth.revocations,
+        users: ctx.oauth.users,
+      })
+    : undefined;
+
   // The single auth composition point (spec 055 FR-375): built once from the canonical dep set and
   // handed to every gated router + the chat route, so each receives the identical argument set (and an
   // API key gets the same key-aware handling everywhere, including /api/auth/*).
@@ -222,6 +241,7 @@ export function createApp(ctx: AppContext): Hono {
     sessionResolver: ctx.sessionResolver,
     apiKeys: ctx.apiKeys,
     tenants: ctx.tenants,
+    oauthVerifier,
   });
 
   // Gated chat (spec 019): the auth gate runs before the streaming handler — anon → 401, else the
