@@ -65,11 +65,10 @@ const form = (body: Record<string, string>) => ({
   body: new URLSearchParams(body).toString(),
 });
 
-async function authorizeQuery(
-  s: ReturnType<typeof setup>,
-  over: Record<string, string> = {},
-  challenge?: string,
-) {
+const asObj = (v: unknown) => v as Record<string, unknown>;
+const bodyOf = async (res: Response) => asObj(await res.json());
+
+async function authorizeQuery(over: Record<string, string> = {}, challenge?: string) {
   const chal = challenge ?? (await s256Challenge(VERIFIER));
   const q = new URLSearchParams({
     response_type: 'code',
@@ -93,7 +92,7 @@ describe('OAuth AS endpoints (spec 063)', () => {
 
   describe('metadata', () => {
     it('serves authorization-server metadata', async () => {
-      const m = await (await s.app.request('/.well-known/oauth-authorization-server')).json();
+      const m = await bodyOf(await s.app.request('/.well-known/oauth-authorization-server'));
       expect(m.issuer).toBe('https://host');
       expect(m.authorization_endpoint).toBe('https://host/oauth/authorize');
       expect(m.token_endpoint).toBe('https://host/oauth/token');
@@ -101,7 +100,7 @@ describe('OAuth AS endpoints (spec 063)', () => {
       expect(m.scopes_supported).toEqual(['mcp:read', 'mcp:admin']);
     });
     it('serves protected-resource metadata', async () => {
-      const m = await (await s.app.request('/.well-known/oauth-protected-resource')).json();
+      const m = await bodyOf(await s.app.request('/.well-known/oauth-protected-resource'));
       expect(m.resource).toBe('https://host/mcp');
       expect(m.authorization_servers).toEqual(['https://host']);
     });
@@ -115,7 +114,7 @@ describe('OAuth AS endpoints (spec 063)', () => {
         body: JSON.stringify({ redirect_uris: [REDIRECT], client_name: 'agent' }),
       });
       expect(res.status).toBe(201);
-      const b = await res.json();
+      const b = await bodyOf(res);
       expect(b.client_id).toBeString();
       expect(b.client_secret).toBeUndefined();
       expect(b.token_endpoint_auth_method).toBe('none');
@@ -131,7 +130,7 @@ describe('OAuth AS endpoints (spec 063)', () => {
           scope: 'mcp:read',
         }),
       });
-      const b = await res.json();
+      const b = await bodyOf(res);
       expect(b.client_secret).toBeString();
     });
     it('rejects missing redirect_uris and non-JSON', async () => {
@@ -163,12 +162,12 @@ describe('OAuth AS endpoints (spec 063)', () => {
 
     it('400s an unknown client or unregistered redirect_uri (never redirects)', async () => {
       expect(
-        (await s.app.request(`/oauth/authorize?${await authorizeQuery(s, { client_id: 'nope' })}`))
+        (await s.app.request(`/oauth/authorize?${await authorizeQuery({ client_id: 'nope' })}`))
           .status,
       ).toBe(400);
       const c = await publicClient();
       const res = await s.app.request(
-        `/oauth/authorize?${await authorizeQuery(s, { client_id: c.id, redirect_uri: 'https://evil/cb' })}`,
+        `/oauth/authorize?${await authorizeQuery({ client_id: c.id, redirect_uri: 'https://evil/cb' })}`,
       );
       expect(res.status).toBe(400);
     });
@@ -183,7 +182,7 @@ describe('OAuth AS endpoints (spec 063)', () => {
       ];
       for (const { err, ...over } of cases) {
         const res = await s.app.request(
-          `/oauth/authorize?${await authorizeQuery(s, { client_id: c.id, ...over })}`,
+          `/oauth/authorize?${await authorizeQuery({ client_id: c.id, ...over })}`,
         );
         expect(res.status).toBe(302);
         expect(new URL(res.headers.get('location') as string).searchParams.get('error')).toBe(err);
@@ -193,7 +192,7 @@ describe('OAuth AS endpoints (spec 063)', () => {
     it('redirects to login when there is no session', async () => {
       const c = await publicClient();
       const res = await s.app.request(
-        `/oauth/authorize?${await authorizeQuery(s, { client_id: c.id })}`,
+        `/oauth/authorize?${await authorizeQuery({ client_id: c.id })}`,
       );
       expect(res.status).toBe(302);
       const loc = res.headers.get('location') as string;
@@ -203,7 +202,7 @@ describe('OAuth AS endpoints (spec 063)', () => {
     it('auto-consents a first-party client and issues a code', async () => {
       const c = await publicClient(true);
       const res = await s.app.request(
-        `/oauth/authorize?${await authorizeQuery(s, { client_id: c.id })}`,
+        `/oauth/authorize?${await authorizeQuery({ client_id: c.id })}`,
         { headers: { cookie: 'ok' } },
       );
       expect(res.status).toBe(302);
@@ -216,7 +215,7 @@ describe('OAuth AS endpoints (spec 063)', () => {
     it('shows a consent page for a non-first-party client with a session', async () => {
       const c = await publicClient(false);
       const res = await s.app.request(
-        `/oauth/authorize?${await authorizeQuery(s, { client_id: c.id })}`,
+        `/oauth/authorize?${await authorizeQuery({ client_id: c.id })}`,
         { headers: { cookie: 'ok' } },
       );
       expect(res.status).toBe(200);
@@ -280,7 +279,7 @@ describe('OAuth AS endpoints (spec 063)', () => {
         ? { id: client_id }
         : s.clients.register({ redirectUris: [REDIRECT], firstParty }).client;
       const res = await s.app.request(
-        `/oauth/authorize?${await authorizeQuery(s, { client_id: c.id })}`,
+        `/oauth/authorize?${await authorizeQuery({ client_id: c.id })}`,
         { headers: { cookie: 'ok' } },
       );
       const code = new URL(res.headers.get('location') as string).searchParams.get(
@@ -302,7 +301,7 @@ describe('OAuth AS endpoints (spec 063)', () => {
         }),
       );
       expect(res.status).toBe(200);
-      const b = await res.json();
+      const b = await bodyOf(res);
       expect(b.token_type).toBe('Bearer');
       expect(b.access_token).toBeString();
       expect(b.expires_in).toBe(3600);
@@ -420,7 +419,7 @@ describe('OAuth AS endpoints (spec 063)', () => {
       const { clientId, code } = await (async () => {
         const c = s.clients.register({ redirectUris: [REDIRECT], firstParty: true }).client;
         const res = await s.app.request(
-          `/oauth/authorize?${await authorizeQuery(s, { client_id: c.id })}`,
+          `/oauth/authorize?${await authorizeQuery({ client_id: c.id })}`,
           { headers: { cookie: 'ok' } },
         );
         return {
@@ -428,7 +427,7 @@ describe('OAuth AS endpoints (spec 063)', () => {
           code: new URL(res.headers.get('location') as string).searchParams.get('code') as string,
         };
       })();
-      const tok = await (
+      const tok = await bodyOf(
         await s.app.request(
           '/oauth/token',
           form({
@@ -438,9 +437,9 @@ describe('OAuth AS endpoints (spec 063)', () => {
             client_id: clientId,
             code_verifier: VERIFIER,
           }),
-        )
-      ).json();
-      const res = await s.app.request('/oauth/revoke', form({ token: tok.access_token }));
+        ),
+      );
+      const res = await s.app.request('/oauth/revoke', form({ token: tok.access_token as string }));
       expect(res.status).toBe(200);
       // invalid token → still 200
       expect((await s.app.request('/oauth/revoke', form({ token: 'garbage' }))).status).toBe(200);

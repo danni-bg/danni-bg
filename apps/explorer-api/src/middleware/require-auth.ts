@@ -17,6 +17,7 @@ import {
 } from '../../../../src/store/repos/tenants.ts';
 import type { UserRow, UsersRepo } from '../../../../src/store/repos/users.ts';
 import type { SessionResolver } from '../auth/kratos-session.ts';
+import type { AccessTokenVerifier } from '../oauth/resource-server.ts';
 import { readAuth } from './auth.ts';
 
 /** The active tenant for a gated request (spec 029): which org the caller is acting within + their role. */
@@ -36,6 +37,10 @@ export type AuthEnv = {
   Variables: {
     user: UserRow;
     apiKey?: { id: string; scopes: ApiKeyScope[] };
+    // Set ONLY when the caller authenticated with a user-delegated OAuth access token (spec 063) —
+    // carries the consented scopes (`mcp:read`/`mcp:admin`) + the client. Like `apiKey`, it drives
+    // scope checks; role/tenant come off `user` (resolved fresh at token verification).
+    oauth?: { clientId: string; scopes: string[] };
     tenant: ActiveTenant;
   };
 };
@@ -64,6 +69,7 @@ export function requireAuth(
   resolveSession?: SessionResolver,
   apiKeys?: ApiKeyRepo,
   tenants?: TenantsRepo,
+  oauthVerifier?: AccessTokenVerifier,
 ): MiddlewareHandler<AuthEnv> {
   return async (c, next) => {
     // API key (machine client, spec 027): `Authorization: Bearer dnk_live_…`. Resolves to the owning
@@ -90,6 +96,29 @@ export function requireAuth(
               : 'unauthorized';
         return c.json({ error: { code, message: 'invalid API key' } }, 401);
       }
+    }
+
+    // OAuth 2.1 access token (user-delegated, spec 063): a Bearer JWT that is NOT a dnk_live_ key.
+    // Verified against the AS's signing key + revocation, resolving the app user FRESH (FR-484). One
+    // combined condition so the non-matching path (session / api-key / no bearer) flows straight on.
+    const bearer = authz?.startsWith('Bearer ') ? authz.slice('Bearer '.length).trim() : undefined;
+    if (oauthVerifier && bearer && !bearer.startsWith(API_KEY_NAMESPACE)) {
+      const principal = await oauthVerifier(bearer);
+      if (!principal) {
+        return c.json({ error: { code: 'unauthorized', message: 'invalid access token' } }, 401);
+      }
+      c.set('user', principal.user);
+      c.set('oauth', { clientId: principal.clientId, scopes: principal.scopes });
+      const membership = tenants?.activeMembership(
+        principal.user.id,
+        principal.user.active_tenant_id,
+      );
+      c.set('tenant', {
+        id: membership?.tenantId ?? DEFAULT_TENANT_ID,
+        role: membership?.role ?? 'member',
+      });
+      await next();
+      return undefined;
     }
 
     const header = readAuth(c);
@@ -141,6 +170,9 @@ export interface AuthGateDeps {
   sessionResolver?: SessionResolver | undefined;
   apiKeys?: ApiKeyRepo | undefined;
   tenants?: TenantsRepo | undefined;
+  /** User-delegated OAuth access-token verifier (spec 063). When wired, a non-`dnk_live_` Bearer JWT
+   *  authenticates as the token's (fresh) user. */
+  oauthVerifier?: AccessTokenVerifier | undefined;
 }
 
 /**
@@ -150,7 +182,13 @@ export interface AuthGateDeps {
  * the same key-aware handling (and 403-vs-401 semantics) every other gated route gives it.
  */
 export function authGate(deps: AuthGateDeps): MiddlewareHandler<AuthEnv> {
-  return requireAuth(deps.users, deps.sessionResolver, deps.apiKeys, deps.tenants);
+  return requireAuth(
+    deps.users,
+    deps.sessionResolver,
+    deps.apiKeys,
+    deps.tenants,
+    deps.oauthVerifier,
+  );
 }
 
 /** Must run after requireAuth (reads the resolved user). API keys can NEVER reach admin (spec 027). */
@@ -166,13 +204,23 @@ export const requireAdmin: MiddlewareHandler<AuthEnv> = async (c, next) => {
   return undefined;
 };
 
-/** Run after requireAuth: an API-key caller must hold `scope`; human sessions pass any scope. */
+/**
+ * Run after requireAuth: an API-key caller must hold `scope`; a user-delegated OAuth token (spec 063)
+ * must hold the mapped `mcp:<scope>`; human sessions pass any scope.
+ */
 export function requireScope(scope: ApiKeyScope): MiddlewareHandler<AuthEnv> {
   return async (c, next) => {
     const key = c.get('apiKey');
     if (key && !key.scopes.includes(scope)) {
       return c.json(
         { error: { code: 'insufficient_scope', message: `API key lacks '${scope}' scope` } },
+        403,
+      );
+    }
+    const oauth = c.get('oauth');
+    if (oauth && !oauth.scopes.includes(`mcp:${scope}`)) {
+      return c.json(
+        { error: { code: 'insufficient_scope', message: `token lacks 'mcp:${scope}' scope` } },
         403,
       );
     }

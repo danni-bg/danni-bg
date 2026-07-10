@@ -54,6 +54,18 @@ Authenticate with a danni **API key** that has the `read` scope (create one unde
 Same four tools, same request/response shapes as the stdio server (it reuses the identical tool
 definitions) — only the transport differs. The tools are scoped to the API key's tenant.
 
+#### Auth options for the hosted `/mcp`
+
+- **API key** (above) — a machine credential, simplest for scripts/agents you run yourself.
+- **User-delegated OAuth 2.1** (spec 063) — the agent acts *on a signed-in human's behalf*, inheriting
+  their role/tenant (resolved fresh per request). Enable it by setting `OAUTH_ISSUER` (the app's public
+  origin) + `OAUTH_SIGNING_SECRET` on the server; the app then serves the standard discovery documents
+  (`/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource`) and the
+  authorization-code + PKCE flow at `/oauth/{authorize,token,register,revoke}`. An MCP client that
+  supports remote OAuth discovers these automatically; the human logs in via the existing session and
+  the client receives a short-lived Bearer token (scope `mcp:read`). This is the required auth for the
+  forthcoming admin MCP (spec 062), where a machine key is not accepted.
+
 ### Tools
 
 | Tool | Arguments | Returns |
