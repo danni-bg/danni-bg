@@ -230,6 +230,23 @@ export function requireScope(scope: ApiKeyScope): MiddlewareHandler<AuthEnv> {
 }
 
 /**
+ * Run after requireAuth on the admin MCP (spec 062): a user-delegated OAuth token must carry the
+ * consented `mcp:admin` scope; a human Kratos session passes (no token scope to check). Pair with
+ * `requireHuman` (which rejects API keys) — admin MCP is human-delegated only.
+ */
+export const requireMcpAdminScope: MiddlewareHandler<AuthEnv> = async (c, next) => {
+  const oauth = c.get('oauth');
+  if (oauth && !oauth.scopes.includes('mcp:admin')) {
+    return c.json(
+      { error: { code: 'insufficient_scope', message: "token lacks 'mcp:admin' scope" } },
+      403,
+    );
+  }
+  await next();
+  return undefined;
+};
+
+/**
  * Run after requireAuth: the explicit "any-key" access class (spec 038) — a valid session OR any
  * valid key may pass, no scope required. A documented pass-through so self-introspection routes
  * (usage/quota) declare their class rather than sit behind bare requireAuth by accident (FR-200).

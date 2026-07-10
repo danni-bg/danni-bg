@@ -10,6 +10,7 @@ import { loadConfig } from '../../../src/config/loader.ts';
 import { buildEmbedder } from '../../../src/index/embedders/factory.ts';
 import { isStale } from '../../../src/lib/time.ts';
 import { openDb } from '../../../src/store/db.ts';
+import { AdminAuditRepo } from '../../../src/store/repos/admin-audit.ts';
 import { ApiKeyRepo } from '../../../src/store/repos/api-keys.ts';
 import { ApiUsageRepo } from '../../../src/store/repos/api-usage.ts';
 import {
@@ -88,6 +89,9 @@ export function main(serve: ServeFn = Bun.serve): void {
   seedSettings(settings);
   const kratosUrl = process.env.KRATOS_PUBLIC_URL ?? 'http://localhost:14433';
   const users = new UsersRepo(db);
+  const apiKeys = new ApiKeyRepo(db);
+  const tenants = new TenantsRepo(db);
+  const audit = new AdminAuditRepo(db);
   const sessionResolver = kratosSessionResolver(kratosUrl);
   // OAuth AS + RS for MCP (spec 063) — enabled when the operator sets OAUTH_ISSUER (the app's public
   // origin) + OAUTH_SIGNING_SECRET. Else MCP stays API-key-only (spec 061). Reuses the users repo +
@@ -134,10 +138,12 @@ export function main(serve: ServeFn = Bun.serve): void {
     metrics: new Metrics(),
     users,
     ...(oauth ? { oauth } : {}),
-    apiKeys: new ApiKeyRepo(db),
+    // Admin MCP (spec 062): the tiered management tools + the audit trail, human-delegated only.
+    adminMcp: { apiKeys, tenants, settings, users, audit },
+    apiKeys,
     apiUsage: new ApiUsageRepo(db),
     tokenUsage: new TokenUsageRepo(db),
-    tenants: new TenantsRepo(db),
+    tenants,
     chatSessions: new PersistentSessionStore(db),
     settings,
     kratosPublicUrl: kratosUrl,
