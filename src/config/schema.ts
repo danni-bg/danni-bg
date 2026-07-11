@@ -112,22 +112,36 @@ export const TranslatorConfigSchema = z
   })
   .strict();
 
+// The fields of ONE embedder endpoint. Shared by the top-level embedder and each failover entry.
+const singleEmbedderShape = {
+  provider: z.enum(['local-onnx', 'hosted-api']),
+  modelId: z.string().nullable().optional(),
+  endpointUrl: z.string().url().nullable().optional(),
+  apiKeyEnv: z.string().min(1).nullable().optional(),
+  // FR-002 / clarification Q2: number of texts per embedder request. Default 32, range 1–256.
+  batchSize: z.number().int().min(1).max(256).default(32),
+  // Optional provider-request cap; effective size = min(batchSize, maxBatchSize, providerCap).
+  // `maxBatchSize === 1` forces single-text mode (FR-005). Unset/null means no cap.
+  maxBatchSize: z.number().int().min(1).max(256).nullable().optional(),
+  // The model's embedding vector dimension (recorded in embeddings_meta; a change vs the
+  // stored value drives a full vector re-embed in run-index). Set it to match the configured
+  // model (e.g. 384 for paraphrase-multilingual-MiniLM-L12-v2, 4096 for Qwen3-Embedding-8B).
+  // Unset → the provider default (local-onnx: 32 stub; hosted-api: 384).
+  dimension: z.number().int().min(1).max(8192).nullable().optional(),
+} as const;
+
+/** One embedder endpoint (no nested fallbacks) — a failover-chain entry (spec 069). */
+export const SingleEmbedderConfigSchema = z.object(singleEmbedderShape).strict();
+
 export const EmbedderConfigSchema = z
   .object({
-    provider: z.enum(['local-onnx', 'hosted-api']),
-    modelId: z.string().nullable().optional(),
-    endpointUrl: z.string().url().nullable().optional(),
-    apiKeyEnv: z.string().min(1).nullable().optional(),
-    // FR-002 / clarification Q2: number of texts per embedder request. Default 32, range 1–256.
-    batchSize: z.number().int().min(1).max(256).default(32),
-    // Optional provider-request cap; effective size = min(batchSize, maxBatchSize, providerCap).
-    // `maxBatchSize === 1` forces single-text mode (FR-005). Unset/null means no cap.
-    maxBatchSize: z.number().int().min(1).max(256).nullable().optional(),
-    // The model's embedding vector dimension (recorded in embeddings_meta; a change vs the
-    // stored value drives a full vector re-embed in run-index). Set it to match the configured
-    // model (e.g. 384 for paraphrase-multilingual-MiniLM-L12-v2, 4096 for Qwen3-Embedding-8B).
-    // Unset → the provider default (local-onnx: 32 stub; hosted-api: 384).
-    dimension: z.number().int().min(1).max(8192).nullable().optional(),
+    ...singleEmbedderShape,
+    // Ordered failover chain (spec 069): endpoints tried in order when the primary transiently fails
+    // (429/5xx/network) — e.g. a cheap local box first, a pay-per-token hosted endpoint as the gap
+    // filler. Every entry MUST produce vectors in the SAME space: `buildEmbedder` rejects a chain
+    // with mismatched `dimension`, and identical MODEL is the operator's contract (see spec 069). A
+    // fallback naming a DIFFERENT model silently corrupts search. Absent → a single embedder as today.
+    fallbacks: z.array(SingleEmbedderConfigSchema).optional(),
   })
   .strict();
 
