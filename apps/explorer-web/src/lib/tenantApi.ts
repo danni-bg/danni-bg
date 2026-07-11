@@ -15,22 +15,31 @@ export interface OrgMembership {
   role: TenantRole;
 }
 
-/** A member of an org, as shown to org admins. */
+/** A member of an org, as shown to org admins. `tokenLimit` = their reserved pool slice (spec 065). */
 export interface OrgMember {
   userId: string;
   email: string;
   displayName: string | null;
   role: TenantRole;
+  tokenLimit: number | null;
 }
 
-/** The caller's active org; `members` is present only when the caller is an owner/admin. */
+/**
+ * The caller's active org. `byomEnabled` + `myAllowance` are visible to any member; `members` + the
+ * pool figures (`pool`/`allocated`/`unallocated`) are present only for an owner/admin (spec 065).
+ */
 export interface ActiveOrg {
   id: string;
   name: string;
   slug: string;
   plan: string;
   role: TenantRole;
+  byomEnabled: boolean;
+  myAllowance: number | null;
   members?: OrgMember[];
+  pool?: number | null;
+  allocated?: number;
+  unallocated?: number | null;
 }
 
 export interface CreatedOrg {
@@ -78,4 +87,13 @@ export function setOrgMemberRole(userId: string, role: TenantRole): Promise<void
 
 export function removeOrgMember(userId: string): Promise<void> {
   return request(`/api/tenant/members/${userId}`, { method: 'DELETE', authed: true });
+}
+
+/** Set/clear a member's reserved token allowance within the org (spec 065; pool-model orgs only). */
+export function setMemberAllowance(userId: string, limit: number | null): Promise<{ ok: boolean }> {
+  return request(`/api/tenant/members/${userId}/allowance`, {
+    method: 'PUT',
+    body: { limit },
+    authed: true,
+  });
 }

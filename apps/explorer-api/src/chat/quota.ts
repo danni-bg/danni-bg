@@ -31,6 +31,42 @@ export function effectiveLimit(userLimit: number | null, defaultLimit?: number):
   return Math.max(0, defaultLimit ?? 0);
 }
 
+/**
+ * A resolved chat allowance (spec 065). Unlike the legacy `limit` (where `0` means UNLIMITED), a
+ * pool-model member's reserved slice of `0` means BLOCKED — so the two are represented explicitly:
+ *   - `unlimited`  → legacy no-limit, or a BYOM org (pool bypassed).
+ *   - `limited(N)` → a hard cap of N tokens; N = 0 blocks immediately (a member with no allocation).
+ */
+export type Allowance = { mode: 'unlimited' } | { mode: 'limited'; limit: number };
+
+/** True when `used` has reached the allowance. `limited(0)` blocks at 0 (unlike `quotaView`). */
+export function exceedsAllowance(a: Allowance, used: number): boolean {
+  return a.mode === 'limited' && used >= a.limit;
+}
+
+/** The numeric cap to report in a 429 body (`0` for an unlimited allowance — never rejected). */
+export function allowanceLimit(a: Allowance): number {
+  return a.mode === 'limited' ? a.limit : 0;
+}
+
+/**
+ * Resolve the effective chat allowance for a member (spec 065 FR-620/621/622):
+ *   - legacy org (`pool === null`): today's semantics — `legacyLimit > 0` caps, else unlimited.
+ *   - pool-model org on BYOM (`usesBYOM`): unlimited — the org pays its own provider (FR-621).
+ *   - pool-model org on platform routing: the member's RESERVED slice; `null`/absent → `0` (blocked).
+ */
+export function chatAllowance(
+  pool: number | null,
+  usesBYOM: boolean,
+  memberAllowance: number | null,
+  legacyLimit: number,
+): Allowance {
+  if (pool === null)
+    return legacyLimit > 0 ? { mode: 'limited', limit: legacyLimit } : { mode: 'unlimited' };
+  if (usesBYOM) return { mode: 'unlimited' };
+  return { mode: 'limited', limit: memberAllowance ?? 0 };
+}
+
 export function quotaView(used: number, limit: number): QuotaView {
   const unlimited = limit <= 0;
   return {

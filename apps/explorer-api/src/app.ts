@@ -12,15 +12,16 @@ import type { McpContext } from '../../../src/mcp/server.ts';
 import type { ApiKeyRepo } from '../../../src/store/repos/api-keys.ts';
 import type { ApiUsageRepo } from '../../../src/store/repos/api-usage.ts';
 import type { PlatformSettingsRepo } from '../../../src/store/repos/platform-settings.ts';
-import type { TenantsRepo } from '../../../src/store/repos/tenants.ts';
+import { DEFAULT_TENANT_ID, type TenantsRepo } from '../../../src/store/repos/tenants.ts';
 import type { TokenUsageRepo } from '../../../src/store/repos/token-usage.ts';
-import type { UsersRepo } from '../../../src/store/repos/users.ts';
+import type { UserRow, UsersRepo } from '../../../src/store/repos/users.ts';
 import { resolveServerDefault } from './admin/resolve-default.ts';
-import { TOGGLES_SETTING_KEY, togglesSchema } from './admin/settings-schema.ts';
+import { LLM_SETTING_KEY, TOGGLES_SETTING_KEY, togglesSchema } from './admin/settings-schema.ts';
 import type { SessionResolver } from './auth/kratos-session.ts';
 import { capDatasetDetail } from './chat/cap.ts';
 import { GenerationManager } from './chat/generation-manager.ts';
 import { type ServerDefault, selectModel, serverDefaultFromEnv } from './chat/providers.ts';
+import { billableTokens, chatAllowance, effectiveLimit } from './chat/quota.ts';
 import { type ConversationStore, SessionStore } from './chat/session.ts';
 import type { PersistentSessionStore } from './chat/sessions-repo.ts';
 import { type DatasetLite, hasGeo, liteToPointer, matchesFiltersLite } from './dataset-lite.ts';
@@ -189,6 +190,34 @@ export function createApp(ctx: AppContext): Hono {
   const resolveDefaultTokenLimit = (tenantId?: string): number | undefined =>
     resolveToggles(tenantId)?.defaultTokenLimit;
   const resolveCacheWeight = (): number | undefined => resolveToggles()?.cachedTokenWeight;
+  // Spec 065: resolve a member's effective chat allowance through their active org's entitlement — a
+  // pool-model org (`token_pool` set) enforces the member's RESERVED slice against ORG-scoped usage; a
+  // BYOM org (the org has its own LLM override) bypasses the pool; a legacy org keeps the per-user
+  // math. Wired only when both the tenants + token-usage repos are present (prod); focused chat unit
+  // tests omit it and fall back to the route's legacy path.
+  const tenantsRepo = ctx.tenants;
+  const tokenUsageRepo = ctx.tokenUsage;
+  const settingsRepo = ctx.settings;
+  const resolveAllowance =
+    tenantsRepo && tokenUsageRepo
+      ? (user: UserRow, tenantId: string | undefined) => {
+          const tid = tenantId ?? DEFAULT_TENANT_ID;
+          const pool = tenantsRepo.get(tid)?.token_pool ?? null;
+          const usesBYOM =
+            pool !== null && settingsRepo != null && settingsRepo.own(LLM_SETTING_KEY, tid) != null;
+          const { used, cached } =
+            pool === null
+              ? tokenUsageRepo.usageForUser(user.id, user.usage_reset_at)
+              : tokenUsageRepo.usageForUserInTenant(user.id, tid);
+          const billable = billableTokens(used, cached, resolveCacheWeight());
+          const legacyLimit = effectiveLimit(user.token_limit, resolveDefaultTokenLimit(tid));
+          const memberAllowance = pool !== null ? tenantsRepo.memberAllowance(tid, user.id) : null;
+          return {
+            billable,
+            allowance: chatAllowance(pool, usesBYOM, memberAllowance, legacyLimit),
+          };
+        }
+      : undefined;
   const resolveMaxOutputTokens = (): number | undefined => resolveToggles()?.maxOutputTokens;
   // Chat kill-switch (spec 056 FR-386): resolved per request through the active org (tenant→global
   // fallback). An unset toggle stays enabled — chat is on by default.
@@ -299,6 +328,7 @@ export function createApp(ctx: AppContext): Hono {
         chat.selectModel ?? ((tenantId?: string) => selectModel(resolveDefault(tenantId))),
       ...(ctx.tokenUsage ? { usage: ctx.tokenUsage } : {}),
       defaultTokenLimit: resolveDefaultTokenLimit,
+      ...(resolveAllowance ? { resolveAllowance } : {}),
       cacheWeight: resolveCacheWeight,
       maxOutputTokens: resolveMaxOutputTokens,
       chatEnabled: resolveChatEnabled,

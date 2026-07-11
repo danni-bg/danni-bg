@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import { ErrorState, Loading } from '../components/StatusMessage.tsx';
 import { Input } from '../components/ui/input.tsx';
+import { formatNumber } from '../lib/format.ts';
 import {
   type OrgMember,
   type TenantRole,
@@ -15,6 +16,7 @@ import {
   getActiveOrg,
   listMemberships,
   removeOrgMember,
+  setMemberAllowance,
   setOrgMemberRole,
   switchOrg,
 } from '../lib/tenantApi.ts';
@@ -29,14 +31,17 @@ const ROLE_LABEL: Record<TenantRole, string> = {
 function MemberRow({
   member,
   canManage,
+  hasPool,
   onChange,
 }: {
   member: OrgMember;
   canManage: boolean;
+  hasPool: boolean;
   onChange: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [alloc, setAlloc] = useState(member.tokenLimit == null ? '' : String(member.tokenLimit));
 
   async function run(fn: () => Promise<void>, fail: string) {
     setBusy(true);
@@ -51,6 +56,17 @@ function MemberRow({
     }
   }
 
+  function saveAllowance() {
+    const trimmed = alloc.trim();
+    const next = trimmed === '' ? null : Number(trimmed);
+    if (next != null && (!Number.isFinite(next) || next < 0)) return;
+    if (next === (member.tokenLimit ?? null)) return;
+    void run(
+      () => setMemberAllowance(member.userId, next).then(() => undefined),
+      'Разпределението надвишава пула.',
+    );
+  }
+
   return (
     <li className="flex items-center justify-between gap-2 text-xs">
       <div className="min-w-0">
@@ -60,6 +76,21 @@ function MemberRow({
       </div>
       {canManage ? (
         <div className="flex shrink-0 items-center gap-1">
+          {hasPool ? (
+            <Input
+              aria-label={`Разпределение за ${member.email}`}
+              value={alloc}
+              onChange={(e) => setAlloc(e.target.value)}
+              onBlur={saveAllowance}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') saveAllowance();
+              }}
+              placeholder="токени"
+              inputMode="numeric"
+              disabled={busy}
+              className="h-7 w-20 px-1 text-right"
+            />
+          ) : null}
           <select
             aria-label={`Роля на ${member.email}`}
             value={member.role}
@@ -223,10 +254,37 @@ export function Organizations() {
         </button>
       </div>
 
+      {/* Entitlement self-view — every member sees the active org's BYOM state + their own slice. */}
+      {active ? (
+        <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          Активна: <span className="font-medium text-foreground">{active.name}</span>
+          {active.myAllowance != null ? (
+            <>
+              {' · '}вашето разпределение:{' '}
+              <span className="tabular-nums text-foreground">
+                {formatNumber(active.myAllowance)}
+              </span>{' '}
+              токена
+            </>
+          ) : null}
+          {active.byomEnabled ? <> {' · '}собствен модел (BYOM)</> : null}
+        </div>
+      ) : null}
+
       {/* Members of the active org — owner/admin only */}
       {canManage && active ? (
         <div className="space-y-2 border-t border-border pt-3">
           <h3 className="text-xs font-semibold">Членове на „{active.name}“</h3>
+          {active.pool != null ? (
+            <p className="text-xs text-muted-foreground">
+              Пул: <span className="tabular-nums">{formatNumber(active.pool)}</span> · разпределени:{' '}
+              <span className="tabular-nums">{formatNumber(active.allocated ?? 0)}</span> ·
+              свободни:{' '}
+              <span className="tabular-nums">{formatNumber(active.unallocated ?? 0)}</span> токена
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">Няма назначен пул от токени.</p>
+          )}
           <div className="flex items-center gap-2">
             <Input
               aria-label="Имейл на член"
@@ -259,7 +317,13 @@ export function Organizations() {
           </div>
           <ul className="space-y-1.5">
             {(active.members ?? []).map((mem) => (
-              <MemberRow key={mem.userId} member={mem} canManage={canManage} onChange={reload} />
+              <MemberRow
+                key={mem.userId}
+                member={mem}
+                canManage={canManage}
+                hasPool={active.pool != null}
+                onChange={reload}
+              />
             ))}
           </ul>
         </div>

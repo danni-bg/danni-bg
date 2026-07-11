@@ -125,4 +125,44 @@ describe('TenantsRepo (spec 029)', () => {
     const rows = s.tenants.membershipsDetailed(u.id);
     expect(rows).toEqual([{ tenantId: t.id, name: 'Detailed Co', slug: 'detailed-co', role: 'owner' }]);
   });
+
+  // ── spec 065 (org entitlements) ────────────────────────────────────────────────────────────────
+  it('a fresh org defaults to legacy: null pool, BYOM off, no allocations', () => {
+    const t = s.tenants.create({ name: 'E', slug: 'e' });
+    expect(t.token_pool).toBeNull();
+    expect(t.byom_enabled).toBe(0);
+    expect(s.tenants.allocatedTokens(t.id)).toBe(0);
+  });
+
+  it('setPool + setByom are reflected on the row (spec 065 FR-600/601)', () => {
+    const t = s.tenants.create({ name: 'E', slug: 'e2' });
+    s.tenants.setPool(t.id, 1_000_000);
+    s.tenants.setByom(t.id, true);
+    const row = s.tenants.get(t.id);
+    expect(row?.token_pool).toBe(1_000_000);
+    expect(row?.byom_enabled).toBe(1);
+    s.tenants.setPool(t.id, null); // back to legacy
+    s.tenants.setByom(t.id, false);
+    expect(s.tenants.get(t.id)?.token_pool).toBeNull();
+    expect(s.tenants.get(t.id)?.byom_enabled).toBe(0);
+  });
+
+  it('member allowances: set/clear, allocatedTokens sums them, membersOf carries them (FR-610/611/612)', () => {
+    const t = s.tenants.create({ name: 'E', slug: 'e3' });
+    const alice = s.mkUser('alice@e.test');
+    const bob = s.mkUser('bob@e.test');
+    s.tenants.addMember(t.id, alice.id, 'owner');
+    s.tenants.addMember(t.id, bob.id, 'member');
+    expect(s.tenants.memberAllowance(t.id, alice.id)).toBeNull(); // no allocation yet
+    expect(s.tenants.setMemberAllowance(t.id, alice.id, 500_000)).toBe(true);
+    expect(s.tenants.setMemberAllowance(t.id, bob.id, 300_000)).toBe(true);
+    expect(s.tenants.allocatedTokens(t.id)).toBe(800_000);
+    expect(s.tenants.memberAllowance(t.id, alice.id)).toBe(500_000);
+    expect(s.tenants.membersOf(t.id).find((m) => m.userId === bob.id)?.tokenLimit).toBe(300_000);
+    // clearing an allocation drops it back out of the sum
+    s.tenants.setMemberAllowance(t.id, bob.id, null);
+    expect(s.tenants.allocatedTokens(t.id)).toBe(500_000);
+    // setting a non-member is a no-op
+    expect(s.tenants.setMemberAllowance(t.id, 'ghost', 1)).toBe(false);
+  });
 });

@@ -5,6 +5,7 @@ import {
   getActiveOrg,
   listMemberships,
   removeOrgMember,
+  setMemberAllowance,
   setOrgMemberRole,
   switchOrg,
 } from './tenantApi.ts';
@@ -106,5 +107,16 @@ describe('tenantApi — cookie-authed org self-service', () => {
     await removeOrgMember('u1');
     expect(cap.url).toBe('/api/tenant/members/u1');
     expect(cap.init?.method).toBe('DELETE');
+  });
+
+  it('setMemberAllowance PUTs the reserved limit (null clears)', async () => {
+    const cap: Captured = {};
+    stub(cap, { ok: true });
+    await setMemberAllowance('u1', 500);
+    expect(cap.url).toBe('/api/tenant/members/u1/allowance');
+    expect(cap.init?.method).toBe('PUT');
+    expect(cap.init?.body).toBe(JSON.stringify({ limit: 500 }));
+    await setMemberAllowance('u1', null);
+    expect(cap.init?.body).toBe(JSON.stringify({ limit: null }));
   });
 });

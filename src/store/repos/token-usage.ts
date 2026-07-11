@@ -102,6 +102,21 @@ export class TokenUsageRepo {
     };
   }
 
+  /**
+   * A member's cumulative token usage WITHIN one org (spec 065) — the draw-down against their reserved
+   * pool slice. All-time (no reset window): the pool is a prepaid bucket a super-admin refills by
+   * raising the allowance, not a rolling window. Only `used`/`cached` matter for the quota math.
+   */
+  usageForUserInTenant(userId: string, tenantId: string): { used: number; cached: number } {
+    const row = this.db
+      .query<{ used: number; cached: number }, [string, string]>(
+        `SELECT COALESCE(SUM(total_tokens), 0) AS used, COALESCE(SUM(cached_input_tokens), 0) AS cached
+         FROM token_usage WHERE user_id = ? AND tenant_id = ?`,
+      )
+      .get(userId, tenantId);
+    return { used: row?.used ?? 0, cached: row?.cached ?? 0 };
+  }
+
   /** Total users (drives the admin `/usage` `total`, spec 056 FR-392). */
   countUsers(): number {
     const row = this.db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM users').get();

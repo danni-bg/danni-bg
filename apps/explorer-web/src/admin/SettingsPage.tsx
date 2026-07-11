@@ -7,6 +7,7 @@ import { Input } from '../components/ui/input.tsx';
 import { type AdminSettings, type SettingsPut, getSettings, putSettings } from '../lib/adminApi.ts';
 import { useServerState } from '../lib/useServerState.ts';
 import { AdminUsage } from './AdminUsage.tsx';
+import { OrgEntitlements } from './OrgEntitlements.tsx';
 
 // The one non-input control on the form; the text fields use the shared <Input> primitive (FR-433).
 const SELECT =
@@ -172,6 +173,7 @@ export function SettingsPage() {
       </form>
 
       <AdminUsage />
+      <OrgEntitlements />
     </div>
   );
 }

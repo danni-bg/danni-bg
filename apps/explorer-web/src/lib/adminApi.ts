@@ -74,3 +74,35 @@ export function setUserLimit(userId: string, limit: number | null): Promise<void
 export function resetUserUsage(userId: string): Promise<void> {
   return request(`/api/admin/users/${userId}/reset`, { method: 'POST', authed: true });
 }
+
+// Org entitlements (spec 065) — the platform's side of a manual B2B contract, super-admin only.
+export interface AdminTenant {
+  id: string;
+  name: string;
+  slug: string;
+  plan: string;
+  token_pool: number | null;
+  byom_enabled: number;
+  memberCount: number;
+}
+
+export async function listTenants(): Promise<AdminTenant[]> {
+  return (await request<{ tenants: AdminTenant[] }>('/api/admin/tenants', { authed: true }))
+    .tenants;
+}
+
+export function setTenantPool(tenantId: string, pool: number | null): Promise<{ ok: boolean }> {
+  return request(`/api/admin/tenants/${tenantId}/pool`, {
+    method: 'PUT',
+    body: { pool },
+    authed: true,
+  });
+}
+
+export function setTenantByom(tenantId: string, enabled: boolean): Promise<{ ok: boolean }> {
+  return request(`/api/admin/tenants/${tenantId}/byom`, {
+    method: 'PUT',
+    body: { enabled },
+    authed: true,
+  });
+}

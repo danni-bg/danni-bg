@@ -15,6 +15,7 @@ import { PlatformSettingsRepo } from '../../../src/store/repos/platform-settings
 import { TenantsRepo } from '../../../src/store/repos/tenants.ts';
 import { TokenUsageRepo } from '../../../src/store/repos/token-usage.ts';
 import { type UserRow, UsersRepo } from '../../../src/store/repos/users.ts';
+import { LLM_SETTING_KEY } from '../src/admin/settings-schema.ts';
 import { type AppContext, createApp } from '../src/app.ts';
 import type { ReadBridge } from '../src/read-bridge.ts';
 
@@ -36,6 +37,7 @@ function setup() {
   const tenants = new TenantsRepo(db);
   const apiKeys = new ApiKeyRepo(db);
   const apiUsage = new ApiUsageRepo(db);
+  const settings = new PlatformSettingsRepo(db);
   const ctx: AppContext = {
     bridge: {} as ReadBridge,
     crosswalk: new Crosswalk(loadCrosswalk()),
@@ -45,9 +47,9 @@ function setup() {
     apiKeys,
     apiUsage,
     tokenUsage: new TokenUsageRepo(db),
-    settings: new PlatformSettingsRepo(db),
+    settings,
   };
-  return { db, users, tenants, apiKeys, apiUsage, app: createApp(ctx) };
+  return { db, users, tenants, apiKeys, apiUsage, settings, app: createApp(ctx) };
 }
 
 const h = (u: UserRow) => ({
@@ -162,6 +164,110 @@ describe('Multi-tenancy (spec 029)', () => {
     });
   });
 
+  describe('org entitlements (spec 065)', () => {
+    const put = (u: UserRow, path: string, body: unknown) =>
+      s.app.request(path, { method: 'PUT', headers: h(u), body: JSON.stringify(body) });
+    const superAdmin = () => mkUser('root@danni.bg', 'admin');
+    const code = async (res: Response) =>
+      ((await res.json()) as { error: { code: string } }).error.code;
+
+    it('super-admin assigns a pool + toggles BYOM; disabling BYOM clears the org LLM override; 404s unknown', async () => {
+      const root = superAdmin();
+      expect((await put(root, `/api/admin/tenants/${acme.id}/pool`, { pool: 1000 })).status).toBe(
+        200,
+      );
+      expect(s.tenants.get(acme.id)?.token_pool).toBe(1000);
+      expect(
+        (await put(root, `/api/admin/tenants/${acme.id}/byom`, { enabled: true })).status,
+      ).toBe(200);
+      s.settings.set(
+        LLM_SETTING_KEY,
+        { kind: 'openai-compatible', model: 'm', baseUrl: null, apiKey: 'k' },
+        null,
+        undefined,
+        acme.id,
+      );
+      await put(root, `/api/admin/tenants/${acme.id}/byom`, { enabled: false });
+      expect(s.settings.own(LLM_SETTING_KEY, acme.id)).toBeNull(); // disabling BYOM cleared it
+      expect((await put(root, '/api/admin/tenants/ghost/pool', { pool: 1 })).status).toBe(404);
+      expect((await put(root, '/api/admin/tenants/ghost/byom', { enabled: true })).status).toBe(
+        404,
+      );
+    });
+
+    it('lowering a pool below what is already allocated is rejected (FR-603)', async () => {
+      const root = superAdmin();
+      await put(root, `/api/admin/tenants/${acme.id}/pool`, { pool: 1000 });
+      s.tenants.setMemberAllowance(acme.id, ownerA.id, 800);
+      const res = await put(root, `/api/admin/tenants/${acme.id}/pool`, { pool: 500 });
+      expect(res.status).toBe(400);
+      expect(await code(res)).toBe('pool_below_allocated');
+    });
+
+    it('org admin allocates within the pool; over-allocation, unknown member, and no-pool are rejected', async () => {
+      await put(superAdmin(), `/api/admin/tenants/${acme.id}/pool`, { pool: 1000 });
+      s.tenants.addMember(acme.id, memberC.id, 'member');
+      expect(
+        (await put(ownerA, `/api/tenant/members/${ownerA.id}/allowance`, { limit: 600 })).status,
+      ).toBe(200);
+      const over = await put(ownerA, `/api/tenant/members/${memberC.id}/allowance`, { limit: 500 }); // 600+500>1000
+      expect(over.status).toBe(400);
+      expect(await code(over)).toBe('over_pool');
+      expect((await put(ownerA, '/api/tenant/members/ghost/allowance', { limit: 1 })).status).toBe(
+        404,
+      );
+      // globex (ownerB's active org) has no pool → no_pool
+      expect(
+        await code(await put(ownerB, `/api/tenant/members/${ownerB.id}/allowance`, { limit: 1 })),
+      ).toBe('no_pool');
+    });
+
+    it('GET /api/tenant surfaces pool/allocated/unallocated + byomEnabled + myAllowance (member sees only their own)', async () => {
+      await put(superAdmin(), `/api/admin/tenants/${acme.id}/pool`, { pool: 1000 });
+      s.tenants.setMemberAllowance(acme.id, ownerA.id, 300);
+      s.tenants.addMember(acme.id, memberC.id, 'member');
+      s.tenants.setMemberAllowance(acme.id, memberC.id, 50);
+      const admin = (await (await s.app.request('/api/tenant', { headers: h(ownerA) })).json()) as {
+        pool: number;
+        allocated: number;
+        unallocated: number;
+        byomEnabled: boolean;
+        myAllowance: number;
+      };
+      expect(admin).toMatchObject({
+        pool: 1000,
+        allocated: 350,
+        unallocated: 650,
+        byomEnabled: false,
+        myAllowance: 300,
+      });
+      const member = (await (
+        await s.app.request('/api/tenant', { headers: h(memberC) })
+      ).json()) as {
+        pool?: number;
+        myAllowance: number;
+        byomEnabled: boolean;
+      };
+      expect(member.pool).toBeUndefined(); // pool figures are admin-only
+      expect(member.myAllowance).toBe(50);
+      expect(member.byomEnabled).toBe(false);
+    });
+
+    it('setting an LLM override requires BYOM enabled (FR-630)', async () => {
+      const off = await put(ownerA, '/api/tenant/settings', {
+        llm: { kind: 'openai-compatible', model: 'm', apiKey: 'k' },
+      });
+      expect(off.status).toBe(403);
+      expect(await code(off)).toBe('byom_disabled');
+      await put(superAdmin(), `/api/admin/tenants/${acme.id}/byom`, { enabled: true });
+      const on = await put(ownerA, '/api/tenant/settings', {
+        llm: { kind: 'openai-compatible', model: 'm', apiKey: 'k' },
+      });
+      expect(on.status).toBe(200);
+      expect(((await on.json()) as { byomEnabled: boolean }).byomEnabled).toBe(true);
+    });
+  });
+
   it('the active org resolves to the pre-set membership; owners see their members', async () => {
     const res = await s.app.request('/api/tenant', { headers: h(ownerA) });
     const body = (await res.json()) as { slug: string; role: string; members: { email: string }[] };
@@ -196,7 +302,7 @@ describe('Multi-tenancy (spec 029)', () => {
     expect(res.status).toBe(403);
   });
 
-  it('only an owner can grant ownership; the last owner cannot be removed', async () => {
+  it('only an owner can grant ownership or remove an owner (spec 065 FR-640)', async () => {
     s.tenants.addMember(acme.id, memberC.id, 'admin'); // an admin, not an owner
     // An admin (not owner) cannot promote someone to owner.
     const promote = await s.app.request(`/api/tenant/members/${ownerA.id}`, {
@@ -205,12 +311,20 @@ describe('Multi-tenancy (spec 029)', () => {
       body: JSON.stringify({ role: 'owner' }),
     });
     expect(promote.status).toBe(403);
-    // The sole owner cannot be removed (would orphan the org).
-    const remove = await s.app.request(`/api/tenant/members/${ownerA.id}`, {
+    // An admin cannot remove an owner at all — owner-only (403), not the last-owner 400 (the hardening).
+    const adminRemoveOwner = await s.app.request(`/api/tenant/members/${ownerA.id}`, {
       method: 'DELETE',
       headers: h(memberC),
     });
-    expect(remove.status).toBe(400);
+    expect(adminRemoveOwner.status).toBe(403);
+    // An owner CAN remove another owner (≥2 owners → the floor is never breached).
+    const secondOwner = mkUser('owner2@acme.test');
+    s.tenants.addMember(acme.id, secondOwner.id, 'owner');
+    const ownerRemovesOwner = await s.app.request(`/api/tenant/members/${secondOwner.id}`, {
+      method: 'DELETE',
+      headers: h(ownerA),
+    });
+    expect(ownerRemovesOwner.status).toBe(200);
   });
 
   it('adding an unknown email 404s; you cannot remove yourself', async () => {
