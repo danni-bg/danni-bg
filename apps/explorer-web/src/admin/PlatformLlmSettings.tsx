@@ -1,19 +1,16 @@
-// Admin platform settings page (spec 019). Edits the chat's default LLM provider + toggles at runtime.
-// The API key is write-only: shown masked, left blank to keep the existing one.
+// Platform LLM + chat toggles (spec 019; spec 066 moved it into the settings sidebar as its own
+// category). Edits the chat's default LLM provider + runtime toggles. The API key is write-only:
+// shown masked, left blank to keep the existing one. Super-admin only (mounted behind RequireAdmin).
 
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { Input } from '../components/ui/input.tsx';
 import { type AdminSettings, type SettingsPut, getSettings, putSettings } from '../lib/adminApi.ts';
 import { useServerState } from '../lib/useServerState.ts';
-import { AdminUsage } from './AdminUsage.tsx';
-import { OrgEntitlements } from './OrgEntitlements.tsx';
 
-// The one non-input control on the form; the text fields use the shared <Input> primitive (FR-433).
 const SELECT =
   'w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
 
-export function SettingsPage() {
+export function PlatformLlmSettings() {
   const [data, setData] = useState<AdminSettings | null>(null);
   const [kind, setKind] = useState('openai-compatible');
   const [model, setModel] = useState('');
@@ -40,9 +37,7 @@ export function SettingsPage() {
     setMaxOutputTokens(s.toggles.maxOutputTokens ? String(s.toggles.maxOutputTokens) : '');
   }
 
-  // Seed the form from the current settings once loaded; a load failure surfaces the error banner.
   const settingsQuery = useServerState('admin:settings', getSettings);
-  // `hydrate` (setter-only, stable) is deliberately not in the deps to avoid a re-hydrate loop.
   useEffect(() => {
     if (settingsQuery.data) hydrate(settingsQuery.data);
     else if (settingsQuery.status === 'error') setError('Неуспешно зареждане на настройките.');
@@ -70,14 +65,8 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto mt-10 w-full max-w-3xl space-y-6 px-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Настройки на платформата</h1>
-        <Link to="/" className="text-sm text-primary hover:underline">
-          Към началото
-        </Link>
-      </div>
-
+    <section className="space-y-4 rounded-lg border border-border p-4">
+      <h2 className="text-sm font-semibold">LLM и чат</h2>
       <form onSubmit={onSave} className="space-y-4">
         <fieldset className="space-y-3 rounded border border-border p-4">
           <legend className="px-1 text-sm font-medium">LLM доставчик (chat)</legend>
@@ -171,9 +160,6 @@ export function SettingsPage() {
           ) : null}
         </div>
       </form>
-
-      <AdminUsage />
-      <OrgEntitlements />
-    </div>
+    </section>
   );
 }

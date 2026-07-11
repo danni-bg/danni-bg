@@ -385,7 +385,7 @@ function useKratosFlow(kind: FlowKind) {
 
 /** The Kratos-owned settings sections (Профил / Парола / Passkeys), each a self-submitting form.
  * AccountPage composes these alongside the non-Kratos account sections (FR-431). */
-export function KratosSettingsSections() {
+export function KratosSettingsSections({ groups }: { groups?: string[] } = {}) {
   const { flow, fatal, onSubmit } = useKratosFlow('settings');
   const csrfNode = flow?.ui.nodes.find(
     (n) => n.group === 'default' && (n.attributes as UiNodeInputAttributes).name === 'csrf_token',
@@ -405,7 +405,7 @@ export function KratosSettingsSections() {
           {m}
         </p>
       ))}
-      {SETTINGS_SECTIONS.map((sec) => {
+      {SETTINGS_SECTIONS.filter((sec) => !groups || groups.includes(sec.group)).map((sec) => {
         const secNodes = flow.ui.nodes.filter((n) => n.group === sec.group);
         if (secNodes.length === 0) return null;
         return (
