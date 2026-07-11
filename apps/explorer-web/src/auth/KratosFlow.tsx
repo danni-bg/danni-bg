@@ -279,11 +279,23 @@ function useKratosFlow(kind: FlowKind) {
         // the SPA's index.html): show a clear error instead of crashing the render on `f.ui.nodes`.
         if (!f?.ui?.nodes) throw new Error('invalid flow response');
         if (active) setFlow(f);
-      } catch {
+      } catch (e) {
+        // Already-authenticated: create*Flow returns `session_already_available` when a valid session
+        // exists (e.g. opening /auth/login while already logged in). That is NOT an outage — send the
+        // user home instead of the fatal "service unavailable" error.
+        const oryError = (e as { response?: { data?: { error?: { id?: string } } } })?.response
+          ?.data?.error?.id;
+        if (oryError === 'session_already_available') {
+          window.location.replace('/');
+          return;
+        }
         if (active) {
-          setFatal(
-            'Услугата за вход е недостъпна. Отворете приложението на http://localhost:8790 или проверете дали Ory стекът работи.',
-          );
+          // The dev hint (open the app on :8790, where /kratos is proxied) only helps `vite dev` on
+          // :5173; on a deployed origin it is meaningless, so show a generic message there.
+          const hint = import.meta.env?.DEV
+            ? ' Отворете приложението на http://localhost:8790 или проверете дали Ory стекът работи.'
+            : ' Опитайте отново по-късно.';
+          setFatal(`Услугата за вход е временно недостъпна.${hint}`);
         }
       }
     })();
