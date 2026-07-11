@@ -62,4 +62,40 @@ describe('index.embedders.factory buildEmbedder', () => {
     expect(e.dimension).toBe(128);
     expect(warned).toContain('hash stub');
   });
+
+  it('wraps primary + fallbacks in a FailoverEmbedder when a chain is configured (spec 069)', () => {
+    const e = buildEmbedder({
+      provider: 'hosted-api',
+      endpointUrl: 'http://spark:8889/v1/embeddings',
+      modelId: 'qwen3-embedding-8b',
+      dimension: 4096,
+      batchSize: 32,
+      fallbacks: [
+        {
+          provider: 'hosted-api',
+          endpointUrl: 'https://api.scaleway.ai/v1/embeddings',
+          modelId: 'qwen3-embedding-8b',
+          dimension: 4096,
+          batchSize: 32,
+        },
+      ],
+    } satisfies EmbCfg);
+    expect(e.constructor.name).toBe('FailoverEmbedder');
+    expect(e.id).toBe('hosted-api:qwen3-embedding-8b'); // stable identity = primary
+    expect(e.dimension).toBe(4096);
+  });
+
+  it('rejects a chain whose fallback declares a different dimension (homogeneity contract)', () => {
+    expect(() =>
+      buildEmbedder({
+        provider: 'hosted-api',
+        endpointUrl: 'http://spark:8889/v1/embeddings',
+        dimension: 4096,
+        batchSize: 32,
+        fallbacks: [
+          { provider: 'hosted-api', endpointUrl: 'https://api/x', dimension: 384, batchSize: 32 },
+        ],
+      } satisfies EmbCfg),
+    ).toThrow(/dimension mismatch/);
+  });
 });
