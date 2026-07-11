@@ -68,18 +68,27 @@ describe('spec 060 structure hygiene', () => {
     expect(kratos).not.toMatch(/from '\.\.\/account\//);
   });
 
-  it('FR-431: AccountPage composes every account section', () => {
-    const page = sources.get(join('account', 'AccountPage.tsx')) ?? '';
+  it('spec 066: the settings sidebar routes every account + platform section under /auth/settings', () => {
+    const main = sources.get('main.tsx') ?? '';
+    // The routed shell replaces the old monolithic AccountPage (spec 060 FR-431 superseded).
+    expect(main).toMatch(/path="\/auth\/settings" element={<SettingsLayout/);
     for (const section of [
-      'AvatarUpload',
+      'ProfileSection',
+      'SecuritySection',
       'AppearanceSection',
       'SelfUsage',
       'ApiKeys',
-      'KratosSettingsSections',
+      'Organizations',
+      'PlatformLlmSettings',
+      'AdminUsage',
+      'OrgEntitlements',
     ]) {
-      expect(page).toContain(section);
+      expect(main).toContain(section);
     }
-    // Routed at /auth/settings via AccountPage, not the KratosFlow settings branch.
-    expect(sources.get('main.tsx') ?? '').toMatch(/path="\/auth\/settings" element={<AccountPage/);
+    // The old single-page composition is gone; profile identity still composes the Kratos sections.
+    expect(sources.has(join('account', 'AccountPage.tsx'))).toBe(false);
+    expect(sources.get(join('account', 'ProfileSection.tsx')) ?? '').toContain(
+      'KratosSettingsSections',
+    );
   });
 });
