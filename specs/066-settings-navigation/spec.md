@@ -20,9 +20,12 @@ Account categories are open; a gated **Платформа** group appears for su
   **security** (Kratos `password` + `passkey` groups), **appearance** (theme), **usage** (token usage),
   **api-keys**, **organizations** — one route + one nav entry each. `KratosSettingsSections` is
   parameterized by `groups` so profile ≠ security split cleanly from the one Kratos settings flow.
-- **FR-502** The **Платформа** group (super-admin only, gated per route by `RequireAdmin`, shown in the
-  sidebar only when `isAdmin`): **admin/llm** (provider + toggles), **admin/usage** (per-user usage),
-  **admin/orgs** (pool + BYOM entitlements).
+- **FR-502** Platform settings are a **separate page** (`/admin/settings`, super-admin only, the whole
+  subtree gated by `RequireAdmin`) reusing the same `SettingsLayout` shell with its own **grouped** nav
+  — group **Чат** (`llm`: provider + toggles) and group **Управление** (`usage`: per-user usage;
+  `orgs`: pool + BYOM entitlements). Personal account settings and platform settings never share a nav.
+  (Revised from the initial single-nav "Платформа group": platform is its own surface, like GitHub's
+  personal-vs-org settings.)
 - **FR-503** The old `AccountPage` + `SettingsPage` monoliths are deleted; their sections become
   route-mounted components (`ProfileSection`/`SecuritySection`/`AppearanceSection` +
   `SelfUsage`/`ApiKeys`/`Organizations`/`PlatformLlmSettings`/`AdminUsage`/`OrgEntitlements`).

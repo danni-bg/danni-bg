@@ -34,6 +34,10 @@ export interface ActiveOrg {
   slug: string;
   plan: string;
   role: TenantRole;
+  // Organization profile (spec 067) — visible to any member.
+  contactEmail: string | null;
+  description: string | null;
+  avatarUrl: string | null;
   byomEnabled: boolean;
   myAllowance: number | null;
   members?: OrgMember[];
@@ -96,4 +100,21 @@ export function setMemberAllowance(userId: string, limit: number | null): Promis
     body: { limit },
     authed: true,
   });
+}
+
+// Organization profile (spec 067) — org owner/admin.
+export function setOrgProfile(
+  contactEmail: string | null,
+  description: string | null,
+): Promise<{ ok: boolean }> {
+  return request('/api/tenant/profile', {
+    method: 'PUT',
+    body: { contactEmail, description },
+    authed: true,
+  });
+}
+
+/** Set/clear the org picture (a resized data: URL, like the user avatar). */
+export function setOrgAvatar(avatarUrl: string | null): Promise<{ avatarUrl: string | null }> {
+  return request('/api/tenant/avatar', { method: 'PUT', body: { avatarUrl }, authed: true });
 }

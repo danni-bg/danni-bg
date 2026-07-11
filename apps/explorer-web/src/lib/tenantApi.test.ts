@@ -6,7 +6,9 @@ import {
   listMemberships,
   removeOrgMember,
   setMemberAllowance,
+  setOrgAvatar,
   setOrgMemberRole,
+  setOrgProfile,
   switchOrg,
 } from './tenantApi.ts';
 
@@ -118,5 +120,26 @@ describe('tenantApi — cookie-authed org self-service', () => {
     expect(cap.init?.body).toBe(JSON.stringify({ limit: 500 }));
     await setMemberAllowance('u1', null);
     expect(cap.init?.body).toBe(JSON.stringify({ limit: null }));
+  });
+
+  it('setOrgProfile PUTs contact email + description', async () => {
+    const cap: Captured = {};
+    stub(cap, { ok: true });
+    await setOrgProfile('c@x.bg', 'Описание');
+    expect(cap.url).toBe('/api/tenant/profile');
+    expect(cap.init?.method).toBe('PUT');
+    expect(cap.init?.body).toBe(
+      JSON.stringify({ contactEmail: 'c@x.bg', description: 'Описание' }),
+    );
+  });
+
+  it('setOrgAvatar PUTs the data URL (null clears)', async () => {
+    const cap: Captured = {};
+    stub(cap, { avatarUrl: null });
+    await setOrgAvatar('data:image/webp;base64,AAAA');
+    expect(cap.url).toBe('/api/tenant/avatar');
+    expect(cap.init?.body).toBe(JSON.stringify({ avatarUrl: 'data:image/webp;base64,AAAA' }));
+    await setOrgAvatar(null);
+    expect(cap.init?.body).toBe(JSON.stringify({ avatarUrl: null }));
   });
 });

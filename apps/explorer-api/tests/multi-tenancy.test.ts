@@ -268,6 +268,55 @@ describe('Multi-tenancy (spec 029)', () => {
     });
   });
 
+  describe('org profile (spec 067)', () => {
+    const put = (u: UserRow, path: string, body: unknown) =>
+      s.app.request(path, { method: 'PUT', headers: h(u), body: JSON.stringify(body) });
+
+    it('owner sets contact/description + avatar; GET reflects them; a plain member cannot write', async () => {
+      expect(
+        (
+          await put(ownerA, '/api/tenant/profile', {
+            contactEmail: 'c@acme.test',
+            description: 'Ние сме Acme',
+          })
+        ).status,
+      ).toBe(200);
+      expect(
+        (await put(ownerA, '/api/tenant/avatar', { avatarUrl: 'data:image/png;base64,AAAA' }))
+          .status,
+      ).toBe(200);
+      const org = (await (await s.app.request('/api/tenant', { headers: h(ownerA) })).json()) as {
+        contactEmail: string;
+        description: string;
+        avatarUrl: string;
+      };
+      expect(org.contactEmail).toBe('c@acme.test');
+      expect(org.description).toBe('Ние сме Acme');
+      expect(org.avatarUrl).toBe('data:image/png;base64,AAAA');
+      // a plain member of the org is not an admin → 403 on both writes
+      s.tenants.addMember(acme.id, memberC.id, 'member');
+      expect(
+        (await put(memberC, '/api/tenant/profile', { contactEmail: null, description: null }))
+          .status,
+      ).toBe(403);
+      expect((await put(memberC, '/api/tenant/avatar', { avatarUrl: null })).status).toBe(403);
+    });
+
+    it('validates the contact email + avatar data-URL shape (400)', async () => {
+      expect(
+        (
+          await put(ownerA, '/api/tenant/profile', {
+            contactEmail: 'not-an-email',
+            description: null,
+          })
+        ).status,
+      ).toBe(400);
+      expect(
+        (await put(ownerA, '/api/tenant/avatar', { avatarUrl: 'http://evil/x.png' })).status,
+      ).toBe(400);
+    });
+  });
+
   it('the active org resolves to the pre-set membership; owners see their members', async () => {
     const res = await s.app.request('/api/tenant', { headers: h(ownerA) });
     const body = (await res.json()) as { slug: string; role: string; members: { email: string }[] };

@@ -127,7 +127,7 @@ export function UserMenu({
               Настройки
             </Link>
             {isAdmin ? (
-              <Link to="/auth/settings/admin/llm" className={ITEM} onClick={() => setOpen(false)}>
+              <Link to="/admin/settings" className={ITEM} onClick={() => setOpen(false)}>
                 <ShieldIcon />
                 Платформа
               </Link>

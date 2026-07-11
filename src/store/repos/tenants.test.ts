@@ -165,4 +165,20 @@ describe('TenantsRepo (spec 029)', () => {
     // setting a non-member is a no-op
     expect(s.tenants.setMemberAllowance(t.id, 'ghost', 1)).toBe(false);
   });
+
+  // ── spec 067 (org profile) ─────────────────────────────────────────────────────────────────────
+  it('setProfile + setAvatar update the org profile; both clear to null', () => {
+    const t = s.tenants.create({ name: 'Prof', slug: 'prof' });
+    expect(s.tenants.get(t.id)?.contact_email).toBeNull();
+    s.tenants.setProfile(t.id, 'hi@prof.bg', 'Описание на организацията');
+    s.tenants.setAvatar(t.id, 'data:image/webp;base64,AAAA');
+    const row = s.tenants.get(t.id);
+    expect(row?.contact_email).toBe('hi@prof.bg');
+    expect(row?.description).toBe('Описание на организацията');
+    expect(row?.avatar_url).toBe('data:image/webp;base64,AAAA');
+    s.tenants.setProfile(t.id, null, null);
+    s.tenants.setAvatar(t.id, null);
+    expect(s.tenants.get(t.id)?.contact_email).toBeNull();
+    expect(s.tenants.get(t.id)?.avatar_url).toBeNull();
+  });
 });

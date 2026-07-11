@@ -22,6 +22,20 @@ import { type AuthEnv, requireHuman, requireTenantAdmin } from '../middleware/re
 
 const createOrgBody = z.object({ name: z.string().trim().min(1).max(80) });
 const allowanceBody = z.object({ limit: z.number().int().nonnegative().nullable() });
+// Org profile (spec 067): contact email + description text, and a picture as a resized data: URL
+// (same cap/shape as the user avatar, routes/me.ts). Empty text is normalized to null client-side.
+const profileBody = z.object({
+  contactEmail: z.string().email().nullable(),
+  description: z.string().max(2000).nullable(),
+});
+const MAX_AVATAR_CHARS = 600_000;
+const orgAvatarBody = z.object({
+  avatarUrl: z
+    .string()
+    .regex(/^data:image\/(png|jpeg|webp);base64,/, 'must be a data:image URL')
+    .max(MAX_AVATAR_CHARS)
+    .nullable(),
+});
 const addMemberBody = z.object({
   email: z.string().email(),
   role: z.enum(['admin', 'member']).optional(), // a new owner is set via PATCH, not add
@@ -59,6 +73,10 @@ export function tenantRoutes(
       // spec). Rate/quota/token caps come from platform (or per-tenant, spec 042) settings, not here.
       plan: t.plan,
       role: active.role,
+      // Organization profile (spec 067) — visible to any member.
+      contactEmail: t.contact_email,
+      description: t.description,
+      avatarUrl: t.avatar_url,
       // Entitlement context (spec 065): BYOM state + the caller's OWN reserved slice are visible to any
       // member; the pool + allocation figures + member list are admin-only (FR-612/651).
       byomEnabled: t.byom_enabled === 1,
@@ -124,6 +142,21 @@ export function tenantRoutes(
     users.setActiveTenant(user.id, target.tenantId);
     const t = tenants.get(target.tenantId);
     return c.json({ ok: true, id: t?.id, slug: t?.slug, role: target.role });
+  });
+
+  // Organization profile (spec 067): org owner/admins set the contact email + description, and the
+  // picture (a resized data: URL) via a separate endpoint mirroring the user avatar.
+  app.put('/profile', requireTenantAdmin, async (c) => {
+    const parsed = await parseBody(c, profileBody, { message: 'invalid profile' });
+    if (parsed instanceof Response) return parsed;
+    tenants.setProfile(c.get('tenant').id, parsed.contactEmail, parsed.description);
+    return c.json({ ok: true, contactEmail: parsed.contactEmail, description: parsed.description });
+  });
+  app.put('/avatar', requireTenantAdmin, async (c) => {
+    const parsed = await parseBody(c, orgAvatarBody, { message: 'invalid avatar' });
+    if (parsed instanceof Response) return parsed;
+    tenants.setAvatar(c.get('tenant').id, parsed.avatarUrl);
+    return c.json({ avatarUrl: parsed.avatarUrl });
   });
 
   app.get('/members', requireTenantAdmin, (c) =>
