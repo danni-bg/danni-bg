@@ -158,7 +158,7 @@ describe('TenantsRepo (spec 029)', () => {
     expect(s.tenants.setMemberAllowance(t.id, bob.id, 300_000)).toBe(true);
     expect(s.tenants.allocatedTokens(t.id)).toBe(800_000);
     expect(s.tenants.memberAllowance(t.id, alice.id)).toBe(500_000);
-    expect(s.tenants.membersOf(t.id).find((m) => m.userId === bob.id)?.tokenLimit).toBe(300_000);
+    expect(s.tenants.membersOf(t.id).find((m) => m.userId === bob.id)?.allowance).toBe(300_000);
     // clearing an allocation drops it back out of the sum
     s.tenants.setMemberAllowance(t.id, bob.id, null);
     expect(s.tenants.allocatedTokens(t.id)).toBe(500_000);
