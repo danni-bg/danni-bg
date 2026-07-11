@@ -92,12 +92,74 @@ describe('Multi-tenancy (spec 029)', () => {
     expect(body.members).toBeUndefined(); // members are listed only to org admins
   });
 
-  it('GET /api/tenant/memberships lists every org the caller belongs to', async () => {
+  it('GET /api/tenant/memberships lists every org the caller belongs to, with name + slug', async () => {
     s.tenants.addMember(globex.id, ownerA.id, 'member'); // ownerA now belongs to two orgs
     const res = await s.app.request('/api/tenant/memberships', { headers: h(ownerA) });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { memberships: { tenantId: string }[] };
+    const body = (await res.json()) as {
+      memberships: { tenantId: string; name: string; slug: string; role: string }[];
+    };
     expect(body.memberships.map((m) => m.tenantId).sort()).toEqual([acme.id, globex.id].sort());
+    // enriched with name + slug (spec 064 FR-504)
+    expect(body.memberships.find((m) => m.tenantId === acme.id)).toEqual({
+      tenantId: acme.id,
+      name: 'Acme',
+      slug: 'acme',
+      role: 'owner',
+    });
+  });
+
+  describe('self-serve org creation (spec 064)', () => {
+    const create = (u: UserRow, name: string) =>
+      s.app.request('/api/tenant', {
+        method: 'POST',
+        headers: h(u),
+        body: JSON.stringify({ name }),
+      });
+
+    it('creates an org, makes the caller owner (Cyrillic slug), and switches their active org', async () => {
+      const res = await create(memberC, 'Моята Фирма');
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as { id: string; name: string; slug: string; role: string };
+      expect(body.name).toBe('Моята Фирма');
+      expect(body.slug).toBe('моята-фирма');
+      expect(body.role).toBe('owner');
+      // the caller's active org is now the new one
+      const active = (await (
+        await s.app.request('/api/tenant', { headers: h(memberC) })
+      ).json()) as {
+        id: string;
+        role: string;
+      };
+      expect(active.id).toBe(body.id);
+      expect(active.role).toBe('owner');
+    });
+
+    it('de-duplicates the slug on name collision, and falls back when the name has no slug chars', async () => {
+      expect(((await (await create(ownerA, 'Dup')).json()) as { slug: string }).slug).toBe('dup');
+      expect(((await (await create(ownerB, 'Dup')).json()) as { slug: string }).slug).toBe('dup-2');
+      const empty = (await (await create(memberC, '!!! ???')).json()) as { slug: string };
+      expect(empty.slug.startsWith('org-')).toBe(true);
+    });
+
+    it('400s an invalid name, 403s an API-key caller, 403s over the org cap', async () => {
+      expect((await create(ownerA, '   ')).status).toBe(400); // trims to empty
+      // an API key can never create an org (requireHuman)
+      const key = s.apiKeys.create({ userId: ownerA.id, name: 'k' });
+      const viaKey = await s.app.request('/api/tenant', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${key.plaintext}` },
+        body: JSON.stringify({ name: 'Via Key' }),
+      });
+      expect(viaKey.status).toBe(403);
+      // over the ownership cap → 403 org_limit, nothing created
+      const capped = mkUser('capped@x.test');
+      for (let i = 0; i < 10; i++)
+        s.tenants.createOwned({ name: `o${i}`, slug: `cap-${i}`, ownerUserId: capped.id });
+      const over = await create(capped, 'One More');
+      expect(over.status).toBe(403);
+      expect(((await over.json()) as { error: { code: string } }).error.code).toBe('org_limit');
+    });
   });
 
   it('the active org resolves to the pre-set membership; owners see their members', async () => {

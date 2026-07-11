@@ -52,8 +52,44 @@ export class TenantsRepo {
     return this.get(id) as TenantRow;
   }
 
+  /**
+   * Create an organization AND make `ownerUserId` its owner in ONE transaction (spec 052 FR-505):
+   * a fault mid-creation leaves neither an orphan tenant nor an ownerless one. Backs self-serve org
+   * creation (spec 064 FR-500) — the super-admin path keeps using `create` + a separate `addMember`.
+   */
+  createOwned(input: {
+    name: string;
+    slug: string;
+    ownerUserId: string;
+    plan?: string;
+    now?: string;
+  }): TenantRow {
+    const id = crypto.randomUUID();
+    const now = input.now ?? nowIso();
+    this.db.transaction(() => {
+      this.db
+        .query('INSERT INTO tenants (id, name, slug, plan, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(id, input.name, input.slug, input.plan ?? 'default', now);
+      this.db
+        .query(
+          "INSERT INTO tenant_members (tenant_id, user_id, role, created_at) VALUES (?, ?, 'owner', ?)",
+        )
+        .run(id, input.ownerUserId, now);
+    })();
+    return this.get(id) as TenantRow;
+  }
+
   get(id: string): TenantRow | null {
     return this.db.query<TenantRow, [string]>('SELECT * FROM tenants WHERE id = ?').get(id) ?? null;
+  }
+
+  /** A free slug based on `base`, de-duplicated with a numeric suffix on collision (spec 064 FR-501). */
+  uniqueSlug(base: string): string {
+    if (!this.getBySlug(base)) return base;
+    for (let i = 2; ; i++) {
+      const candidate = `${base}-${i}`;
+      if (!this.getBySlug(candidate)) return candidate;
+    }
   }
 
   getBySlug(slug: string): TenantRow | null {
@@ -91,6 +127,16 @@ export class TenantsRepo {
       )
       .run(tenantId, userId, role, now);
     return res.changes > 0;
+  }
+
+  /** How many orgs a user OWNS — bounds self-serve org creation (spec 064 FR-502). */
+  ownedCount(userId: string): number {
+    const row = this.db
+      .query<{ n: number }, [string]>(
+        "SELECT COUNT(*) AS n FROM tenant_members WHERE user_id = ? AND role = 'owner'",
+      )
+      .get(userId);
+    return row?.n ?? 0;
   }
 
   /** How many owners a tenant has — guards the zero-owner invariant (spec 036 FR-182). */
@@ -139,6 +185,23 @@ export class TenantsRepo {
   /** The user's primary (oldest) membership, or null if they belong to no tenant yet. */
   primaryMembership(userId: string): Membership | null {
     return this.membershipsOf(userId)[0] ?? null;
+  }
+
+  /**
+   * A user's memberships joined with each org's name + slug (spec 064 FR-504) — drives the org
+   * console's labelled list in one call. Creation order, like `membershipsOf`.
+   */
+  membershipsDetailed(
+    userId: string,
+  ): { tenantId: string; name: string; slug: string; role: TenantRole }[] {
+    return this.db
+      .query<{ tenant_id: string; name: string; slug: string; role: TenantRole }, [string]>(
+        `SELECT m.tenant_id, t.name, t.slug, m.role
+         FROM tenant_members m JOIN tenants t ON t.id = m.tenant_id
+         WHERE m.user_id = ? ORDER BY m.created_at`,
+      )
+      .all(userId)
+      .map((r) => ({ tenantId: r.tenant_id, name: r.name, slug: r.slug, role: r.role }));
   }
 
   /**

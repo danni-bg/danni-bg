@@ -92,4 +92,37 @@ describe('TenantsRepo (spec 029)', () => {
       [t1.id, t2.id].sort(),
     );
   });
+
+  // ── spec 064 (self-service) ────────────────────────────────────────────────────────────────────
+  it('createOwned makes the caller the owner atomically (spec 064 FR-500/505)', () => {
+    const u = s.mkUser('owner@x.test');
+    const t = s.tenants.createOwned({ name: 'Мой Бизнес', slug: 'moi-biznes', ownerUserId: u.id });
+    expect(t.name).toBe('Мой Бизнес');
+    expect(s.tenants.membershipOf(t.id, u.id)?.role).toBe('owner');
+    expect(s.tenants.ownerCount(t.id)).toBe(1);
+  });
+
+  it('ownedCount counts only the orgs a user owns (spec 064 FR-502)', () => {
+    const u = s.mkUser('u@x.test');
+    const owned = s.tenants.createOwned({ name: 'A', slug: 'a', ownerUserId: u.id });
+    const other = s.tenants.create({ name: 'B', slug: 'b' });
+    s.tenants.addMember(other.id, u.id, 'admin'); // admin, not owner → not counted
+    expect(s.tenants.ownedCount(u.id)).toBe(1);
+    expect(s.tenants.ownerCount(owned.id)).toBe(1);
+  });
+
+  it('uniqueSlug de-duplicates on collision (spec 064 FR-501)', () => {
+    expect(s.tenants.uniqueSlug('free')).toBe('free'); // untaken → as-is
+    s.tenants.create({ name: 'Taken', slug: 'taken' });
+    expect(s.tenants.uniqueSlug('taken')).toBe('taken-2');
+    s.tenants.create({ name: 'Taken2', slug: 'taken-2' });
+    expect(s.tenants.uniqueSlug('taken')).toBe('taken-3');
+  });
+
+  it('membershipsDetailed carries each org name + slug (spec 064 FR-504)', () => {
+    const u = s.mkUser('d@x.test');
+    const t = s.tenants.createOwned({ name: 'Detailed Co', slug: 'detailed-co', ownerUserId: u.id });
+    const rows = s.tenants.membershipsDetailed(u.id);
+    expect(rows).toEqual([{ tenantId: t.id, name: 'Detailed Co', slug: 'detailed-co', role: 'owner' }]);
+  });
 });
