@@ -192,6 +192,54 @@ and [`chat-tools.md`](../specs/008-map-data-explorer/contracts/chat-tools.md); t
 has its own contract at
 [`specs/016-entity-knowledge-graph/contracts/entities-get.md`](../specs/016-entity-knowledge-graph/contracts/entities-get.md).
 
+## 4. Organization token model (spec 065)
+
+Chat (`POST /api/chat`, and the chat MCP tool) consumes LLM tokens, and how much a caller may spend is
+governed by their **organization**. The model is a three-level hierarchy — the terms are distinct, not
+synonyms:
+
+- **Entitlement** — what the *platform* grants an *org* under a (manual, B2B) contract: its **pool** +
+  its **BYOM** capability. Set only by a super-admin.
+- **Pool** (`token_pool`) — the token quantity of that entitlement, spent on **danni-routed** models.
+- **Allowance** (`token_allowance`) — a *member's* reserved slice of the pool, set by the org's admins.
+  The sum of a pool's allowances is kept ≤ the pool.
+
+An org is in exactly one of three modes:
+
+| Mode | Condition | Chat token limit |
+|---|---|---|
+| **Legacy** | no pool assigned (`token_pool` unset) | the existing per-user quota (spec 021): `users.token_limit` → tenant/global `defaultTokenLimit` → **unlimited**. This is the default — the `default` org and every un-entitled org. |
+| **Pool** | a pool is assigned, platform-routed | the member's **allowance**, enforced against their usage **within that org**. A member with **no allowance is blocked** (a `0` allowance blocks — unlike legacy, where `0` means unlimited). |
+| **BYOM** | the org brought its own model (an LLM override is set; requires a super-admin to enable BYOM) | **unbounded by the pool** — the org calls its own provider and pays it directly; those turns don't draw down the pool. |
+
+**What a chat consumer sees on exhaustion** — the same `429` as the per-user quota (spec 039):
+
+```json
+{ "error": { "code": "quota_exceeded", "message": "token quota exceeded",
+             "details": { "used": 100000, "limit": 100000, "resetsAt": null } } }
+```
+
+`resetsAt: null` states there is no scheduled reset — a pool is a prepaid bucket that a super-admin
+refills by raising the pool/allowance (there is no automatic window). This governs both a signed-in
+human and a machine `dnk_live_…` key / OAuth token: a key acts **within its org**, so a keyed chat
+caller is bound by the key owner's allowance in that org.
+
+### Managing entitlements (REST)
+
+These are HTTP routes, not admin-MCP tools (the admin MCP manages keys/members/settings; pool +
+allowance are REST-only for now):
+
+| Route | Who | Purpose |
+|---|---|---|
+| `PUT /api/admin/tenants/:id/pool` `{pool}` | super-admin | assign/clear an org's pool (`null` → legacy). Lowering below the allocated sum → `400 pool_below_allocated`. |
+| `PUT /api/admin/tenants/:id/byom` `{enabled}` | super-admin | enable/disable BYOM (disabling clears any org LLM override). |
+| `PUT /api/tenant/members/:userId/allowance` `{limit}` | org owner/admin | set a member's allowance. Σ allowances > pool → `400 over_pool`; no pool → `400 no_pool`. |
+| `GET /api/tenant` | any member | the active org: `byomEnabled` + your `myAllowance`; owner/admins also see `pool`, `allocated`, `unallocated`, and each member's `allowance`. |
+
+Nothing here bills or charges — the platform only **enforces** a manually-agreed entitlement. The
+data/request-API quota (spec 028/040, `quota_limit`) is a **separate**, request-count allowance and is
+unaffected by the token model above.
+
 ## Freshness
 
 Every record carries a `freshness` block (`lastSyncedAt`, `sourceLastModified`, `isStale`,
