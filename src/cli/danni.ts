@@ -9,6 +9,7 @@ COMMANDS
   sync          Trigger a sync run (discover + capture)
   curate        Curate captured resources into UTF-8 declared-schema artifacts
   index         Build / update FTS5 + vector index over the curated mirror
+  pipeline      One-shot full refresh: sync → curate → index (for a scheduled job)
   refresh-metadata  Backfill source timestamps (metadata_modified) without re-downloading resources
   status        Print health and recent run history
   search        Run a query against the index
@@ -31,6 +32,7 @@ const commandLoaders: Record<string, () => Promise<{ run: CommandHandler }>> = {
   sync: () => import('./sync.ts').then((m) => ({ run: m.run })),
   curate: () => import('./curate.ts').then((m) => ({ run: m.run })),
   index: () => import('./index-cmd.ts').then((m) => ({ run: m.run })),
+  pipeline: () => import('./pipeline.ts').then((m) => ({ run: m.run })),
   'refresh-metadata': () => import('./refresh-metadata.ts').then((m) => ({ run: m.run })),
   status: () => import('./status.ts').then((m) => ({ run: m.run })),
   search: () => import('./search.ts').then((m) => ({ run: m.run })),
