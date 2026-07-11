@@ -95,6 +95,10 @@ const adminAddMemberBody = z.object({
   role: z.enum(['owner', 'admin', 'member']).optional(),
 });
 
+// Org entitlements (spec 065) — the platform's side of a manual B2B contract, super-admin only.
+const poolBody = z.object({ pool: z.number().int().nonnegative().nullable() });
+const byomBody = z.object({ enabled: z.boolean() });
+
 export function adminRoutes(
   users: UsersRepo,
   settings: PlatformSettingsRepo,
@@ -214,6 +218,42 @@ export function adminRoutes(
       if (!tenant) return c.json({ error: { code: 'not_found', message: 'no such org' } }, 404);
       clearTenantSettings(settings, tenant.id);
       return c.json(tenantSettingsView(settings, tenant.id));
+    });
+
+    // Assign/adjust an org's platform-routing token pool (spec 065 FR-600) — reflects an offline B2B
+    // contract. Lowering it below what the org has already allocated to members is rejected (FR-603) so
+    // the platform can't strand existing budgets; the org must re-allocate down first. `null` → legacy.
+    app.put('/tenants/:id/pool', async (c) => {
+      const tenant = tenants.get(c.req.param('id'));
+      if (!tenant) return c.json({ error: { code: 'not_found', message: 'no such org' } }, 404);
+      const parsed = await parseBody(c, poolBody, { message: 'invalid pool' });
+      if (parsed instanceof Response) return parsed;
+      if (parsed.pool !== null && parsed.pool < tenants.allocatedTokens(tenant.id)) {
+        return c.json(
+          {
+            error: {
+              code: 'pool_below_allocated',
+              message: 'pool is below the org’s already-allocated total',
+              details: { allocated: tenants.allocatedTokens(tenant.id) },
+            },
+          },
+          400,
+        );
+      }
+      tenants.setPool(tenant.id, parsed.pool);
+      return c.json({ ok: true, pool: parsed.pool });
+    });
+
+    // Enable/disable BYOM for an org (spec 065 FR-601). Disabling also CLEARS any tenant LLM override so
+    // model resolution + pool metering revert to platform routing consistently (no stale own-model).
+    app.put('/tenants/:id/byom', async (c) => {
+      const tenant = tenants.get(c.req.param('id'));
+      if (!tenant) return c.json({ error: { code: 'not_found', message: 'no such org' } }, 404);
+      const parsed = await parseBody(c, byomBody, { message: 'invalid byom' });
+      if (parsed instanceof Response) return parsed;
+      tenants.setByom(tenant.id, parsed.enabled);
+      if (!parsed.enabled) settings.clear(LLM_SETTING_KEY, tenant.id);
+      return c.json({ ok: true, byomEnabled: parsed.enabled });
     });
     app.post('/tenants', async (c) => {
       const parsed = await parseBody(c, createTenantBody, { message: 'invalid org' });

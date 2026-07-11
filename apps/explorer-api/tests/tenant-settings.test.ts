@@ -76,6 +76,10 @@ describe('Tenant-scoped settings (spec 042)', () => {
     s.tenants.addMember(acme.id, ownerA.id, 'owner');
     s.tenants.addMember(globex.id, ownerB.id, 'owner');
     s.tenants.addMember(acme.id, memberA.id, 'member');
+    // Setting an LLM override now requires BYOM enabled (spec 065 FR-630); these spec-042 tests exercise
+    // that override path, so enable BYOM for both orgs. The BYOM-disabled 403 is covered in the 065 suite.
+    s.tenants.setByom(acme.id, true);
+    s.tenants.setByom(globex.id, true);
   });
   afterEach(() => s.db.close());
 

@@ -21,6 +21,7 @@ import { parseBody } from '../middleware/parse-body.ts';
 import { type AuthEnv, requireHuman, requireTenantAdmin } from '../middleware/require-auth.ts';
 
 const createOrgBody = z.object({ name: z.string().trim().min(1).max(80) });
+const allowanceBody = z.object({ limit: z.number().int().nonnegative().nullable() });
 const addMemberBody = z.object({
   email: z.string().email(),
   role: z.enum(['admin', 'member']).optional(), // a new owner is set via PATCH, not add
@@ -58,7 +59,21 @@ export function tenantRoutes(
       // spec). Rate/quota/token caps come from platform (or per-tenant, spec 042) settings, not here.
       plan: t.plan,
       role: active.role,
-      ...(isAdmin ? { members: tenants.membersOf(t.id) } : {}),
+      // Entitlement context (spec 065): BYOM state + the caller's OWN reserved slice are visible to any
+      // member; the pool + allocation figures + member list are admin-only (FR-612/651).
+      byomEnabled: t.byom_enabled === 1,
+      myAllowance: tenants.memberAllowance(t.id, c.get('user').id),
+      ...(isAdmin
+        ? {
+            members: tenants.membersOf(t.id),
+            pool: t.token_pool,
+            allocated: tenants.allocatedTokens(t.id),
+            unallocated:
+              t.token_pool === null
+                ? null
+                : Math.max(0, t.token_pool - tenants.allocatedTokens(t.id)),
+          }
+        : {}),
     });
   });
 
@@ -131,9 +146,13 @@ export function tenantRoutes(
   // inherited LLM config exposes no key hint (FR-243). Only wired when a settings repo is present.
   const settings = opts.settings;
   if (settings) {
-    app.get('/settings', requireTenantAdmin, (c) =>
-      c.json(tenantSettingsView(settings, c.get('tenant').id)),
-    );
+    const byomEnabled = (tenantId: string) => tenants.get(tenantId)?.byom_enabled === 1;
+    const settingsView = (tenantId: string) => ({
+      ...tenantSettingsView(settings, tenantId),
+      // spec 065 FR-631: the console shows the LLM (BYOM) section only when BYOM is enabled.
+      byomEnabled: byomEnabled(tenantId),
+    });
+    app.get('/settings', requireTenantAdmin, (c) => c.json(settingsView(c.get('tenant').id)));
     app.put('/settings', requireTenantAdmin, async (c) => {
       // `.strict()` (in the schema) rejects any non-allowlisted field (a platform toggle / api
       // rate-quota knob) with a 400 that writes nothing (FR-241 / SC-3).
@@ -142,8 +161,18 @@ export function tenantRoutes(
         details: 'flatten',
       });
       if (parsed instanceof Response) return parsed;
+      // BYOM gate (spec 065 FR-630): setting an LLM override requires the super-admin to have enabled
+      // BYOM for this org. Clearing (llm: null) is always allowed. Nothing is written on a 403.
+      if (parsed.llm && !byomEnabled(c.get('tenant').id)) {
+        return c.json(
+          {
+            error: { code: 'byom_disabled', message: 'BYOM is not enabled for this organization' },
+          },
+          403,
+        );
+      }
       applyTenantSettings(settings, c.get('tenant').id, parsed, c.get('user').email);
-      return c.json(tenantSettingsView(settings, c.get('tenant').id));
+      return c.json(settingsView(c.get('tenant').id));
     });
   }
 
@@ -166,6 +195,43 @@ export function tenantRoutes(
       );
     }
     return c.json({ ok: true, member: { userId: invitee.id, email: invitee.email, role } }, 201);
+  });
+
+  // Set a member's RESERVED token allowance within the org (spec 065 FR-610). Pool-model orgs only;
+  // the change is rejected if the resulting sum of allowances would exceed the pool (FR-611).
+  app.put('/members/:userId/allowance', requireTenantAdmin, async (c) => {
+    const parsed = await parseBody(c, allowanceBody, { message: 'invalid allowance' });
+    if (parsed instanceof Response) return parsed;
+    const active = c.get('tenant');
+    const t = tenants.get(active.id);
+    if (t?.token_pool == null) {
+      return c.json(
+        { error: { code: 'no_pool', message: 'this organization has no token pool' } },
+        400,
+      );
+    }
+    const userId = c.req.param('userId');
+    if (!tenants.membershipOf(active.id, userId)) {
+      return c.json({ error: { code: 'not_found', message: 'no such member' } }, 404);
+    }
+    // Reserved invariant: (current allocations − this member's current − new) must fit the pool.
+    const current = tenants.memberAllowance(active.id, userId) ?? 0;
+    const next = parsed.limit ?? 0;
+    const projected = tenants.allocatedTokens(active.id) - current + next;
+    if (projected > t.token_pool) {
+      return c.json(
+        {
+          error: {
+            code: 'over_pool',
+            message: 'allocation would exceed the organization’s token pool',
+            details: { pool: t.token_pool, allocated: tenants.allocatedTokens(active.id) },
+          },
+        },
+        400,
+      );
+    }
+    tenants.setMemberAllowance(active.id, userId, parsed.limit);
+    return c.json({ ok: true, userId, allowance: parsed.limit });
   });
 
   // Change a member's role. Only an owner may grant/transfer the owner role — or change an owner's
@@ -208,10 +274,15 @@ export function tenantRoutes(
     if (!member) {
       return c.json({ error: { code: 'not_found', message: 'no such member' } }, 404);
     }
-    if (member.role === 'owner' && tenants.ownerCount(active.id) <= 1) {
+    // Owner-gate removal (spec 065 FR-640): only an owner may remove an owner — mirrors the PATCH
+    // owner-gate (spec 036 FR-181), closing the gap where an admin could remove a non-last owner. The
+    // last-owner floor needs no explicit check HERE: a non-owner can't remove an owner (above), an
+    // owner can't remove themselves (above), so an owner removing an owner implies ≥2 owners — the org
+    // always keeps ≥1. (The super-admin route, which has no owner-gate, retains its last-owner check.)
+    if (member.role === 'owner' && active.role !== 'owner') {
       return c.json(
-        { error: { code: 'bad_request', message: 'cannot remove the last owner' } },
-        400,
+        { error: { code: 'forbidden', message: 'only an owner can remove an owner' } },
+        403,
       );
     }
     tenants.removeMember(active.id, target);

@@ -18,7 +18,13 @@ import type {
   GenerationManager,
   UsageInfo,
 } from '../chat/generation-manager.ts';
-import { billableTokens, effectiveLimit, quotaView } from '../chat/quota.ts';
+import {
+  type Allowance,
+  allowanceLimit,
+  billableTokens,
+  effectiveLimit,
+  exceedsAllowance,
+} from '../chat/quota.ts';
 import { runChatTurn } from '../chat/run.ts';
 import { type ConversationStore, MAX_CONTEXT_DATASETS, windowMessages } from '../chat/session.ts';
 import { chatSSE } from '../chat/sse-events.ts';
@@ -60,6 +66,14 @@ export interface ChatRouteDeps {
   /** Resolve the platform default token quota (0/undefined = unlimited) per request, through the
    * caller's active org (spec 042 FR-240): a per-tenant `defaultTokenLimit` override applies. */
   defaultTokenLimit?: (tenantId?: string) => number | undefined;
+  /** Tenant-aware allowance resolution (spec 065): given the caller + active org, returns the billable
+   * usage + the effective `Allowance` (org pool slice / BYOM bypass / legacy). When wired (prod) it
+   * supersedes the per-user `defaultTokenLimit`/`usage` computation; when absent, the route falls back
+   * to the legacy path below (focused chat tests with no entitlements wired). */
+  resolveAllowance?: (
+    user: UserRow,
+    tenantId: string | undefined,
+  ) => { billable: number; allowance: Allowance };
   /** Resolve the cache-hit token weight (0–1) per request; undefined = default. */
   cacheWeight?: () => number | undefined;
   /** Resolve the max output tokens per answer; undefined = built-in default. */
@@ -113,10 +127,20 @@ export function chatHandler(deps: ChatRouteDeps) {
     // records the outcome + LLM tokens/cost below.
     const requestId = c.get('requestId') as string | undefined;
     if (deps.usage && user) {
-      const limit = effectiveLimit(user.token_limit, deps.defaultTokenLimit?.(tenantId));
-      const { used, cached } = deps.usage.usageForUser(user.id, user.usage_reset_at);
-      const billable = billableTokens(used, cached, deps.cacheWeight?.());
-      if (quotaView(billable, limit).exceeded) {
+      // Spec 065: a pool-model org enforces the member's reserved slice (org-scoped usage), a BYOM org
+      // bypasses the pool, and a legacy org keeps today's per-user math — all resolved by
+      // `resolveAllowance` when wired; else the legacy fallback preserves prior behavior exactly.
+      let billable: number;
+      let allowance: Allowance;
+      if (deps.resolveAllowance) {
+        ({ billable, allowance } = deps.resolveAllowance(user, tenantId));
+      } else {
+        const limit = effectiveLimit(user.token_limit, deps.defaultTokenLimit?.(tenantId));
+        const { used, cached } = deps.usage.usageForUser(user.id, user.usage_reset_at);
+        billable = billableTokens(used, cached, deps.cacheWeight?.());
+        allowance = limit > 0 ? { mode: 'limited', limit } : { mode: 'unlimited' };
+      }
+      if (exceedsAllowance(allowance, billable)) {
         // FR-212 (spec 039): a quota 429 must be a correct HTTP citizen. Set Retry-After whenever the
         // reset time is knowable; while token resets stay manual/admin-only (`users.usage_reset_at`
         // marks the window START, not a scheduled end — spec 021), no such time exists, so state that
@@ -134,7 +158,7 @@ export function chatHandler(deps: ChatRouteDeps) {
             error: {
               code: 'quota_exceeded',
               message: 'token quota exceeded',
-              details: { used: billable, limit, resetsAt },
+              details: { used: billable, limit: allowanceLimit(allowance), resetsAt },
             },
           },
           429,

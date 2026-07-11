@@ -19,9 +19,12 @@ import { ApiKeyRepo } from '../../../src/store/repos/api-keys.ts';
 import { ApiUsageRepo } from '../../../src/store/repos/api-usage.ts';
 import { DatasetsRepo } from '../../../src/store/repos/datasets.ts';
 import { EntitiesRepo } from '../../../src/store/repos/entities.ts';
+import { PlatformSettingsRepo } from '../../../src/store/repos/platform-settings.ts';
 import { ResourcesRepo } from '../../../src/store/repos/resources.ts';
+import { TenantsRepo } from '../../../src/store/repos/tenants.ts';
 import { TokenUsageRepo } from '../../../src/store/repos/token-usage.ts';
 import { UsersRepo } from '../../../src/store/repos/users.ts';
+import { LLM_SETTING_KEY } from '../src/admin/settings-schema.ts';
 import { type AppContext, createApp } from '../src/app.ts';
 import { GenerationManager } from '../src/chat/generation-manager.ts';
 import { maxConcurrentOverrun } from '../src/chat/quota.ts';
@@ -142,6 +145,8 @@ describe('chat metering integrity (spec 039)', () => {
   let bridge: ReadBridge;
   let users: UsersRepo;
   let tokenUsage: TokenUsageRepo;
+  let tenants: TenantsRepo;
+  let settings: PlatformSettingsRepo;
   let userId: string;
 
   beforeEach(async () => {
@@ -154,6 +159,8 @@ describe('chat metering integrity (spec 039)', () => {
     bridge = new ReadBridge({ db, storeRoot, embedder, freshnessSloSeconds: 86400 });
     users = new UsersRepo(db);
     tokenUsage = new TokenUsageRepo(db);
+    tenants = new TenantsRepo(db);
+    settings = new PlatformSettingsRepo(db);
     userId = users.findOrCreateByKratosId({
       kratosIdentityId: 'kratos-id-1',
       email: 'user@example.com',
@@ -171,6 +178,8 @@ describe('chat metering integrity (spec 039)', () => {
       crosswalk: new Crosswalk(loadCrosswalk()),
       users,
       tokenUsage,
+      tenants,
+      settings,
       health: () => ({ lastSyncedAt: null, isStale: true, defaultProvider: 'absent' }),
       chat: {
         sessions: new SessionStore(() => 'sess-1'),
@@ -323,6 +332,72 @@ describe('chat metering integrity (spec 039)', () => {
     const snap = metrics.snapshot();
     expect(snap.quotaRejections).toEqual({ tokens: 2 });
     expect(snap.rateLimitRejections).toBe(0);
+  });
+
+  // ── spec 065: org token pool + BYOM ─────────────────────────────────────────────────────────────
+  describe('org token pool + BYOM (spec 065)', () => {
+    // Put the AUTH_HEADERS user into a pool-model org and make it their active org.
+    function joinOrg(slug: string): string {
+      const org = tenants.create({ name: slug, slug });
+      tenants.addMember(org.id, userId, 'owner');
+      users.setActiveTenant(userId, org.id);
+      return org.id;
+    }
+
+    it('a pool-model member is bounded by their RESERVED slice, enforced on org-scoped usage (FR-620)', async () => {
+      const orgId = joinOrg('paid');
+      tenants.setPool(orgId, 1000);
+      tenants.setMemberAllowance(orgId, userId, 100); // reserved slice
+      // within the slice → the turn runs
+      expect(
+        (await post(appWith(mockModel([textStep('hi', 10, 5)])), { message: 'q' })).status,
+      ).toBe(200);
+      // push org-scoped usage past the slice → the next turn 429s with the slice as the limit
+      tokenUsage.record({
+        userId,
+        tenantId: orgId,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 200,
+      });
+      const over = await post(appWith(mockModel([textStep('hi', 10, 5)])), { message: 'q2' });
+      expect(over.status).toBe(429);
+      expect(
+        ((await over.json()) as { error: { details: { limit: number } } }).error.details.limit,
+      ).toBe(100);
+    });
+
+    it('a pool member with NO allocation is blocked — limit 0 blocks, unlike legacy 0=unlimited (FR-620)', async () => {
+      const orgId = joinOrg('noalloc');
+      tenants.setPool(orgId, 1000); // pool set, but this member has no slice
+      expect((await post(appWith(mockModel([textStep('x', 1, 1)])), { message: 'q' })).status).toBe(
+        429,
+      );
+    });
+
+    it('a BYOM org bypasses the pool entirely — no slice needed, usage uncapped (FR-621)', async () => {
+      const orgId = joinOrg('byom');
+      tenants.setPool(orgId, 1000);
+      // The org brings its own model (an LLM override present) → pool bypassed. No allocation, and even
+      // usage far beyond any slice does not 429.
+      settings.set(
+        LLM_SETTING_KEY,
+        { kind: 'openai-compatible', model: 'own', baseUrl: null, apiKey: 'k' },
+        null,
+        undefined,
+        orgId,
+      );
+      tokenUsage.record({
+        userId,
+        tenantId: orgId,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 999_999,
+      });
+      expect(
+        (await post(appWith(mockModel([textStep('hi', 10, 5)])), { message: 'q' })).status,
+      ).toBe(200);
+    });
   });
 });
 

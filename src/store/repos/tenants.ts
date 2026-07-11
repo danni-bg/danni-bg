@@ -23,6 +23,14 @@ export interface TenantRow {
    * default rate/quota/token limits from `plan`; until then, do not mistake this field for enforcement.
    */
   plan: string;
+  /**
+   * The org's assigned platform-routing token entitlement (spec 065). NULL = legacy (per-user
+   * metering, unchanged); a value >= 0 = a pool-model org whose member allowances sum to <= this.
+   * Set ONLY by a super-admin (the contract boundary, FR-600/602).
+   */
+  token_pool: number | null;
+  /** Whether the org may Bring Its Own Model (spec 065 FR-601). 0/1; super-admin-set; off by default. */
+  byom_enabled: number;
   created_at: string;
 }
 
@@ -38,6 +46,8 @@ export interface TenantMember {
   email: string;
   displayName: string | null;
   role: TenantRole;
+  /** The member's reserved token allowance within the org (spec 065); null = no allocation. */
+  tokenLimit: number | null;
 }
 
 export class TenantsRepo {
@@ -126,6 +136,46 @@ export class TenantsRepo {
          ON CONFLICT(tenant_id, user_id) DO NOTHING`,
       )
       .run(tenantId, userId, role, now);
+    return res.changes > 0;
+  }
+
+  // ── entitlements (spec 065) ─────────────────────────────────────────────────────────────────────
+
+  /** Set/clear the org's platform-routing token pool (super-admin only, FR-600). null → legacy. */
+  setPool(tenantId: string, pool: number | null): void {
+    this.db.query('UPDATE tenants SET token_pool = ? WHERE id = ?').run(pool, tenantId);
+  }
+
+  /** Enable/disable BYOM for the org (super-admin only, FR-601). */
+  setByom(tenantId: string, enabled: boolean): void {
+    this.db.query('UPDATE tenants SET byom_enabled = ? WHERE id = ?').run(enabled ? 1 : 0, tenantId);
+  }
+
+  /** Sum of the org's members' reserved allowances — the pool amount already handed out (FR-611/612). */
+  allocatedTokens(tenantId: string): number {
+    const row = this.db
+      .query<{ n: number }, [string]>(
+        'SELECT COALESCE(SUM(token_limit), 0) AS n FROM tenant_members WHERE tenant_id = ?',
+      )
+      .get(tenantId);
+    return row?.n ?? 0;
+  }
+
+  /** A member's reserved allowance within the org (null = no allocation). */
+  memberAllowance(tenantId: string, userId: string): number | null {
+    const row = this.db
+      .query<{ token_limit: number | null }, [string, string]>(
+        'SELECT token_limit FROM tenant_members WHERE tenant_id = ? AND user_id = ?',
+      )
+      .get(tenantId, userId);
+    return row ? row.token_limit : null;
+  }
+
+  /** Set/clear a member's reserved allowance (org owner/admin, FR-610). Returns false if not a member. */
+  setMemberAllowance(tenantId: string, userId: string, limit: number | null): boolean {
+    const res = this.db
+      .query('UPDATE tenant_members SET token_limit = ? WHERE tenant_id = ? AND user_id = ?')
+      .run(limit, tenantId, userId);
     return res.changes > 0;
   }
 
@@ -228,14 +278,20 @@ export class TenantsRepo {
     return this.membershipOf(preferredTenantId, userId) ?? primary;
   }
 
-  /** Members of a tenant joined with their identity (for the org-admin view). */
+  /** Members of a tenant joined with their identity + reserved allowance (for the org-admin view). */
   membersOf(tenantId: string): TenantMember[] {
     return this.db
       .query<
-        { user_id: string; email: string; display_name: string | null; role: TenantRole },
+        {
+          user_id: string;
+          email: string;
+          display_name: string | null;
+          role: TenantRole;
+          token_limit: number | null;
+        },
         [string]
       >(
-        `SELECT m.user_id, u.email, u.display_name, m.role
+        `SELECT m.user_id, u.email, u.display_name, m.role, m.token_limit
          FROM tenant_members m JOIN users u ON u.id = m.user_id
          WHERE m.tenant_id = ? ORDER BY m.created_at`,
       )
@@ -245,6 +301,7 @@ export class TenantsRepo {
         email: r.email,
         displayName: r.display_name,
         role: r.role,
+        tokenLimit: r.token_limit,
       }));
   }
 }
