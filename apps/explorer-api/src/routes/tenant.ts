@@ -5,9 +5,13 @@
 import { Hono } from 'hono';
 import type { MiddlewareHandler } from 'hono';
 import { z } from 'zod';
+import { slugify } from '../../../../src/lib/slug.ts';
 import type { PlatformSettingsRepo } from '../../../../src/store/repos/platform-settings.ts';
 import type { TenantRole, TenantsRepo } from '../../../../src/store/repos/tenants.ts';
 import type { UsersRepo } from '../../../../src/store/repos/users.ts';
+
+/** Anti-abuse cap on self-serve org creation (spec 064 FR-502): orgs a single user may OWN. */
+export const MAX_ORGS_OWNED_PER_USER = 10;
 import {
   applyTenantSettings,
   tenantSettingsPutSchema,
@@ -16,6 +20,7 @@ import {
 import { parseBody } from '../middleware/parse-body.ts';
 import { type AuthEnv, requireHuman, requireTenantAdmin } from '../middleware/require-auth.ts';
 
+const createOrgBody = z.object({ name: z.string().trim().min(1).max(80) });
 const addMemberBody = z.object({
   email: z.string().email(),
   role: z.enum(['admin', 'member']).optional(), // a new owner is set via PATCH, not add
@@ -57,8 +62,38 @@ export function tenantRoutes(
     });
   });
 
-  // The caller's org memberships (every org they belong to).
-  app.get('/memberships', (c) => c.json({ memberships: tenants.membershipsOf(c.get('user').id) }));
+  // The caller's org memberships (every org they belong to), each with its name + slug (spec 064
+  // FR-504) so the console renders a labelled list in one call.
+  app.get('/memberships', (c) =>
+    c.json({ memberships: tenants.membershipsDetailed(c.get('user').id) }),
+  );
+
+  // Self-serve org creation (spec 064 FR-500): the caller creates a new organization, becomes its
+  // OWNER, and their active org switches to it — atomically. Human-session only (an API key can never
+  // create an org). Bounded by MAX_ORGS_OWNED_PER_USER (FR-502).
+  app.post('/', requireHuman, async (c) => {
+    const parsed = await parseBody(c, createOrgBody, { message: 'invalid organization' });
+    if (parsed instanceof Response) return parsed;
+    const user = c.get('user');
+    if (tenants.ownedCount(user.id) >= MAX_ORGS_OWNED_PER_USER) {
+      return c.json(
+        {
+          error: {
+            code: 'org_limit',
+            message: `you can own at most ${MAX_ORGS_OWNED_PER_USER} organizations`,
+          },
+        },
+        403,
+      );
+    }
+    // A Cyrillic name yields a readable Cyrillic slug; a name that slugifies to empty (all
+    // punctuation/emoji) falls back to a stable generated token so the slug is never blank.
+    const base = slugify(parsed.name) || `org-${crypto.randomUUID().slice(0, 8)}`;
+    const slug = tenants.uniqueSlug(base);
+    const t = tenants.createOwned({ name: parsed.name, slug, ownerUserId: user.id });
+    users.setActiveTenant(user.id, t.id);
+    return c.json({ id: t.id, name: t.name, slug: t.slug, role: 'owner' as TenantRole }, 201);
+  });
 
   // Switch the caller's active org (spec 041 FR-231) — human-session only: a key is tenant-bound and
   // must never mutate its owner's persisted selection. The target must be one of the caller's

@@ -17,6 +17,7 @@ import {
 } from '../lib/theme.ts';
 import { ApiKeys } from './ApiKeys.tsx';
 import { AvatarUpload } from './AvatarUpload.tsx';
+import { Organizations } from './Organizations.tsx';
 import { SelfUsage } from './SelfUsage.tsx';
 
 const THEME_OPTIONS: { value: Theme; label: string }[] = [
@@ -71,6 +72,7 @@ export function AccountPage() {
         <AvatarUpload />
         <AppearanceSection />
         <SelfUsage />
+        <Organizations />
         <ApiKeys />
         <KratosSettingsSections />
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
