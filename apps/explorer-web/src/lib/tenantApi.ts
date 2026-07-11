@@ -15,13 +15,13 @@ export interface OrgMembership {
   role: TenantRole;
 }
 
-/** A member of an org, as shown to org admins. `tokenLimit` = their reserved pool slice (spec 065). */
+/** A member of an org, as shown to org admins. `allowance` = their reserved pool slice (spec 065). */
 export interface OrgMember {
   userId: string;
   email: string;
   displayName: string | null;
   role: TenantRole;
-  tokenLimit: number | null;
+  allowance: number | null;
 }
 
 /**

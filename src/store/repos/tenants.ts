@@ -47,7 +47,7 @@ export interface TenantMember {
   displayName: string | null;
   role: TenantRole;
   /** The member's reserved token allowance within the org (spec 065); null = no allocation. */
-  tokenLimit: number | null;
+  allowance: number | null;
 }
 
 export class TenantsRepo {
@@ -155,7 +155,7 @@ export class TenantsRepo {
   allocatedTokens(tenantId: string): number {
     const row = this.db
       .query<{ n: number }, [string]>(
-        'SELECT COALESCE(SUM(token_limit), 0) AS n FROM tenant_members WHERE tenant_id = ?',
+        'SELECT COALESCE(SUM(token_allowance), 0) AS n FROM tenant_members WHERE tenant_id = ?',
       )
       .get(tenantId);
     return row?.n ?? 0;
@@ -164,17 +164,17 @@ export class TenantsRepo {
   /** A member's reserved allowance within the org (null = no allocation). */
   memberAllowance(tenantId: string, userId: string): number | null {
     const row = this.db
-      .query<{ token_limit: number | null }, [string, string]>(
-        'SELECT token_limit FROM tenant_members WHERE tenant_id = ? AND user_id = ?',
+      .query<{ token_allowance: number | null }, [string, string]>(
+        'SELECT token_allowance FROM tenant_members WHERE tenant_id = ? AND user_id = ?',
       )
       .get(tenantId, userId);
-    return row ? row.token_limit : null;
+    return row ? row.token_allowance : null;
   }
 
   /** Set/clear a member's reserved allowance (org owner/admin, FR-610). Returns false if not a member. */
   setMemberAllowance(tenantId: string, userId: string, limit: number | null): boolean {
     const res = this.db
-      .query('UPDATE tenant_members SET token_limit = ? WHERE tenant_id = ? AND user_id = ?')
+      .query('UPDATE tenant_members SET token_allowance = ? WHERE tenant_id = ? AND user_id = ?')
       .run(limit, tenantId, userId);
     return res.changes > 0;
   }
@@ -287,11 +287,11 @@ export class TenantsRepo {
           email: string;
           display_name: string | null;
           role: TenantRole;
-          token_limit: number | null;
+          token_allowance: number | null;
         },
         [string]
       >(
-        `SELECT m.user_id, u.email, u.display_name, m.role, m.token_limit
+        `SELECT m.user_id, u.email, u.display_name, m.role, m.token_allowance
          FROM tenant_members m JOIN users u ON u.id = m.user_id
          WHERE m.tenant_id = ? ORDER BY m.created_at`,
       )
@@ -301,7 +301,7 @@ export class TenantsRepo {
         email: r.email,
         displayName: r.display_name,
         role: r.role,
-        tokenLimit: r.token_limit,
+        allowance: r.token_allowance,
       }));
   }
 }

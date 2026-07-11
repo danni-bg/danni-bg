@@ -41,7 +41,7 @@ function MemberRow({
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [alloc, setAlloc] = useState(member.tokenLimit == null ? '' : String(member.tokenLimit));
+  const [alloc, setAlloc] = useState(member.allowance == null ? '' : String(member.allowance));
 
   async function run(fn: () => Promise<void>, fail: string) {
     setBusy(true);
@@ -60,7 +60,7 @@ function MemberRow({
     const trimmed = alloc.trim();
     const next = trimmed === '' ? null : Number(trimmed);
     if (next != null && (!Number.isFinite(next) || next < 0)) return;
-    if (next === (member.tokenLimit ?? null)) return;
+    if (next === (member.allowance ?? null)) return;
     void run(
       () => setMemberAllowance(member.userId, next).then(() => undefined),
       'Разпределението надвишава пула.',

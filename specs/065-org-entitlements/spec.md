@@ -26,6 +26,19 @@ Out of scope (unchanged / deferred): automated billing, pricing, invoicing, usag
 self-serve purchase (all sales are manual B2B); pool auto-refill/scheduling (manual, like
 `usage_reset_at`); the data/request-API quota (spec 028/040) is a separate allowance, untouched.
 
+## Vocabulary (canonical — three distinct levels, not synonyms)
+
+- **Entitlement** — what the *platform* grants an *org* under the contract: its **pool** + its **BYOM**
+  capability. Super-admin-set (the contract boundary).
+- **Pool** — the token quantity of that entitlement (`tenants.token_pool` ↔ API `pool`).
+- **Allowance** — a *member's* reserved slice of the pool, set by the org admin
+  (`tenant_members.token_allowance` ↔ API `allowance`; migration 022 renamed it from `token_limit`).
+  Σ allowances ≤ pool. Distinct from the legacy per-user `users.token_limit`, which stays a *limit*.
+
+So: platform grants an **entitlement** (pool + BYOM) → org admin divides the **pool** into per-member
+**allowances**. DB columns carry the `token_` prefix (`token_pool`/`token_allowance`); the API drops it
+(`pool`/`allowance`/`myAllowance`).
+
 ## Data model (migration)
 
 - **`tenants.token_pool`** INTEGER NULL — the org's assigned platform-routing token entitlement.
@@ -33,8 +46,9 @@ self-serve purchase (all sales are manual B2B); pool auto-refill/scheduling (man
   pool-model org. Set **only** by a super-admin.
 - **`tenants.byom_enabled`** INTEGER NOT NULL DEFAULT 0 — BYOM capability. Set **only** by a
   super-admin. Default **off**.
-- **`tenant_members.token_limit`** INTEGER NULL — a member's reserved allowance within the org.
-  `NULL`/absent = **0** (no allocation). Set by the org's owner/admins.
+- **`tenant_members.token_allowance`** INTEGER NULL — a member's reserved allowance within the org
+  (renamed from `token_limit` by migration 022 to match the domain/API word). `NULL`/absent = **0**
+  (no allocation). Set by the org's owner/admins.
 
 Existing rows: every current tenant gets `token_pool = NULL` + `byom_enabled = 0`, and every
 membership `token_limit = NULL` — so all existing orgs (incl. `default`) keep today's behavior with
