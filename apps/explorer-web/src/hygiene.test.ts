@@ -68,10 +68,12 @@ describe('spec 060 structure hygiene', () => {
     expect(kratos).not.toMatch(/from '\.\.\/account\//);
   });
 
-  it('spec 066: the settings sidebar routes every account + platform section under /auth/settings', () => {
+  it('spec 066: the routed settings shell mounts every account + platform section', () => {
     const main = sources.get('main.tsx') ?? '';
-    // The routed shell replaces the old monolithic AccountPage (spec 060 FR-431 superseded).
-    expect(main).toMatch(/path="\/auth\/settings" element={<SettingsLayout/);
+    // The routed SettingsLayout shell replaces the old monolithic AccountPage (spec 060 FR-431 superseded).
+    expect(main).toContain('SettingsLayout');
+    expect(main).toContain('path="/auth/settings"');
+    expect(main).toContain('path="/admin/settings"'); // platform is its own page (spec 066b)
     for (const section of [
       'ProfileSection',
       'SecuritySection',

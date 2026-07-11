@@ -14,8 +14,8 @@ test('an admin opens the settings page and sees the provider with a masked key',
 
   await page.getByRole('button', { name: 'Профил меню' }).click();
   await page.getByRole('link', { name: 'Платформа' }).click();
-  // Spec 066: the platform LLM settings now live in the settings sidebar at /auth/settings/admin/llm.
-  await expect(page).toHaveURL(/\/auth\/settings\/admin\/llm$/);
+  // Spec 066b: platform settings are a SEPARATE page at /admin/settings; its index → the LLM category.
+  await expect(page).toHaveURL(/\/admin\/settings\/llm$/);
   await expect(page.getByRole('heading', { name: 'LLM и чат' })).toBeVisible();
 
   // Provider config is hydrated; the API key is shown only as a masked hint.

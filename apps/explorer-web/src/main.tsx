@@ -16,8 +16,33 @@ import { AuthError, Callback } from './auth/Callback.tsx';
 import { KratosFlow } from './auth/KratosFlow.tsx';
 import { RequireAdmin } from './auth/guards.tsx';
 import { applyResolvedTheme, loadTheme, resolveTheme } from './lib/theme.ts';
-import { SettingsLayout } from './settings/SettingsLayout.tsx';
+import { type NavGroup, SettingsLayout } from './settings/SettingsLayout.tsx';
 import './index.css';
+
+// Personal account settings (open to any signed-in user) and platform settings (super-admin, its own
+// page) are two SEPARATE surfaces sharing the same shell (spec 066b) — each with its own routed nav.
+const ACCOUNT_NAV: NavGroup[] = [
+  {
+    items: [
+      { to: 'profile', label: 'Профил' },
+      { to: 'security', label: 'Сигурност' },
+      { to: 'appearance', label: 'Облик' },
+      { to: 'usage', label: 'Потребление' },
+      { to: 'api-keys', label: 'API ключове' },
+      { to: 'organizations', label: 'Организации' },
+    ],
+  },
+];
+const PLATFORM_NAV: NavGroup[] = [
+  { label: 'Чат', items: [{ to: 'llm', label: 'LLM и чат' }] },
+  {
+    label: 'Управление',
+    items: [
+      { to: 'usage', label: 'Потребление' },
+      { to: 'orgs', label: 'Организации' },
+    ],
+  },
+];
 
 // Apply the stored theme before first paint to avoid a flash of the wrong theme.
 applyResolvedTheme(
@@ -46,9 +71,11 @@ if (root) {
               path="/auth/verification"
               element={<KratosFlow kind="verification" title="Потвърждение на имейл" />}
             />
-            {/* Settings: a routed sidebar (spec 066). Account categories are open; the platform group
-                is guarded per route. Deep-linkable at /auth/settings/<category>. */}
-            <Route path="/auth/settings" element={<SettingsLayout />}>
+            {/* Personal account settings (spec 066): open categories in a routed sidebar. */}
+            <Route
+              path="/auth/settings"
+              element={<SettingsLayout title="Настройки" nav={ACCOUNT_NAV} />}
+            >
               <Route index element={<Navigate to="profile" replace />} />
               <Route path="profile" element={<ProfileSection />} />
               <Route path="security" element={<SecuritySection />} />
@@ -56,40 +83,22 @@ if (root) {
               <Route path="usage" element={<SelfUsage />} />
               <Route path="api-keys" element={<ApiKeys />} />
               <Route path="organizations" element={<Organizations />} />
-              <Route
-                path="admin/llm"
-                element={
-                  <RequireAdmin>
-                    <PlatformLlmSettings />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="admin/usage"
-                element={
-                  <RequireAdmin>
-                    <AdminUsage />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="admin/orgs"
-                element={
-                  <RequireAdmin>
-                    <OrgEntitlements />
-                  </RequireAdmin>
-                }
-              />
             </Route>
-            {/* Back-compat: the old platform-settings URL redirects into the new sidebar (guarded). */}
+            {/* Platform settings (spec 066b): a SEPARATE super-admin page with its own grouped nav. The
+                whole subtree is gated — a non-admin is sent home before the layout renders. */}
             <Route
               path="/admin/settings"
               element={
                 <RequireAdmin>
-                  <Navigate to="/auth/settings/admin/llm" replace />
+                  <SettingsLayout title="Платформа" nav={PLATFORM_NAV} />
                 </RequireAdmin>
               }
-            />
+            >
+              <Route index element={<Navigate to="llm" replace />} />
+              <Route path="llm" element={<PlatformLlmSettings />} />
+              <Route path="usage" element={<AdminUsage />} />
+              <Route path="orgs" element={<OrgEntitlements />} />
+            </Route>
             <Route path="/auth/callback" element={<Callback />} />
             <Route path="/auth/error" element={<AuthError />} />
           </Routes>

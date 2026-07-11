@@ -21,6 +21,7 @@ import {
   switchOrg,
 } from '../lib/tenantApi.ts';
 import { useServerState } from '../lib/useServerState.ts';
+import { OrgProfileSection } from './OrgProfileSection.tsx';
 
 const ROLE_LABEL: Record<TenantRole, string> = {
   owner: 'собственик',
@@ -272,6 +273,8 @@ export function Organizations() {
       ) : null}
 
       {/* Members of the active org — owner/admin only */}
+      {/* Org profile (spec 067) + member management — owner/admin only. */}
+      {canManage && active ? <OrgProfileSection org={active} onChange={reload} /> : null}
       {canManage && active ? (
         <div className="space-y-2 border-t border-border pt-3">
           <h3 className="text-xs font-semibold">Членове на „{active.name}“</h3>

@@ -31,6 +31,10 @@ export interface TenantRow {
   token_pool: number | null;
   /** Whether the org may Bring Its Own Model (spec 065 FR-601). 0/1; super-admin-set; off by default. */
   byom_enabled: number;
+  // Organization profile (spec 067) — org owner/admins set these; null = unset.
+  contact_email: string | null;
+  description: string | null;
+  avatar_url: string | null; // a resized data: URL, same shape as users.avatar_url
   created_at: string;
 }
 
@@ -149,6 +153,18 @@ export class TenantsRepo {
   /** Enable/disable BYOM for the org (super-admin only, FR-601). */
   setByom(tenantId: string, enabled: boolean): void {
     this.db.query('UPDATE tenants SET byom_enabled = ? WHERE id = ?').run(enabled ? 1 : 0, tenantId);
+  }
+
+  /** Set the org's contact email + description (spec 067; org owner/admin). Either may be null. */
+  setProfile(tenantId: string, contactEmail: string | null, description: string | null): void {
+    this.db
+      .query('UPDATE tenants SET contact_email = ?, description = ? WHERE id = ?')
+      .run(contactEmail, description, tenantId);
+  }
+
+  /** Set/clear the org's picture — a resized data: URL, like the user avatar (spec 067). */
+  setAvatar(tenantId: string, avatarUrl: string | null): void {
+    this.db.query('UPDATE tenants SET avatar_url = ? WHERE id = ?').run(avatarUrl, tenantId);
   }
 
   /** Sum of the org's members' reserved allowances — the pool amount already handed out (FR-611/612). */
